@@ -310,6 +310,14 @@ impl LauncherUI {
         };
 
         crate::privacy::set(InterfaceConfig::get(cx).privacy_mode);
+        // The SteamGridDB key lives in Credential Manager (an old interface.json's key moves there).
+        {
+            let config = InterfaceConfig::get_mut(cx);
+            match config.steamgriddb_key.clone().filter(|k| !k.trim().is_empty()) {
+                Some(key) => crate::secrets::write_string(crate::secrets::STEAMGRIDDB, Some(&key)),
+                None => config.steamgriddb_key = crate::secrets::read_string(crate::secrets::STEAMGRIDDB),
+            }
+        }
         // Chat networks connected last time sign back in (for unread messages).
         crate::chat::start();
 

@@ -1,0 +1,76 @@
+# Builds a Flux release on GitHub's Windows machines when a version tag (v1.2.3) is pushed, signs
+# the update, records build provenance (anyone can check where the exe came from with
+# `gh attestation verify Flux.exe -R PineappleJuiceFlavour/flux`) and attaches the files to the
+# GitHub release for that tag.
+#
+# Needs one repo secret: FLUX_UPDATE_KEY = the contents of
+# %USERPROFILE%\.flux-signing\flux-update-key.json (Settings > Secrets and variables > Actions).
+# Optional: repo variable FLUX_MSA_CLIENT_ID = Flux's Microsoft app id, once Mojang approves it;
+# repo secret FLUX_CURSEFORGE_KEY = Flux's own CurseForge API key.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Manual run: builds and attests only, nothing is published.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust
+        run: |
+          rustup toolchain install 1.99.0 --profile minimal
+          rustup default 1.99.0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build and sign
+        shell: bash
+        env:
+          FLUX_UPDATE_KEY: ${{ secrets.FLUX_UPDATE_KEY }}
+          FLUX_MSA_CLIENT_ID: ${{ vars.FLUX_MSA_CLIENT_ID }}
+          FLUX_CURSEFORGE_KEY: ${{ secrets.FLUX_CURSEFORGE_KEY }}
+          FLUX_TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'v0.0.0-test' }}
+        run: |
+          pip install cryptography
+          python scripts/ci_release.py
+
+      - name: Build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/Flux.exe
+
+      - name: Attach to the release
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          NOTES="SHA-256 (Flux.exe): $(cut -d' ' -f1 dist/SHA256.txt)
+
+          Built from ${GITHUB_SHA} by GitHub Actions. Verify with: gh attestation verify Flux.exe -R ${GITHUB_REPOSITORY}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/Flux.exe dist/update_manifest_windows.json --clobber
+          else
+            gh release create "$TAG" dist/Flux.exe dist/update_manifest_windows.json --title "Flux ${TAG#v}" --notes "$NOTES"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: github.ref_type != 'tag'
+        with:
+          name: flux-test-build
+          path: dist/

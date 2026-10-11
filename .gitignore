@@ -8,3 +8,9 @@ heaptrack*
 .idea/
 /target-dist
 /target-e2e
+/scripts/flux-release.json
+/scripts/__pycache__
+/mod/build
+/mod/.gradle
+/mod/run
+/mod/run-bench

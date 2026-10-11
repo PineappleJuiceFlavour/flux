@@ -7,7 +7,12 @@ use ustr::Ustr;
 use crate::loader::Loader;
 
 pub const CURSEFORGE_SEARCH_URL: &str = "https://api.curseforge.com/v1/mods/search";
-pub const CURSEFORGE_API_KEY: &str = "$2a$10$YXf6dyJfJZM4zeChdr.RDOvWN.L48AN0dQShQO8/cVc5ho1wA8ZbS";
+/// Flux's own CurseForge API key when built with FLUX_CURSEFORGE_KEY (a CI secret); until Flux has
+/// one, Pandora Launcher's.
+pub const CURSEFORGE_API_KEY: &str = match option_env!("FLUX_CURSEFORGE_KEY") {
+    Some(key) => key,
+    None => "$2a$10$YXf6dyJfJZM4zeChdr.RDOvWN.L48AN0dQShQO8/cVc5ho1wA8ZbS",
+};
 pub const MINECRAFT_GAME_ID: u32 = 432;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize)]

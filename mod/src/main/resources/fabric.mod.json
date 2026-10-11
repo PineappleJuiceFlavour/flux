@@ -1,0 +1,20 @@
+{
+	"schemaVersion": 1,
+	"id": "flux",
+	"version": "${version}",
+	"name": "Flux",
+	"description": "Companion mod for the Flux launcher: a repeatable FPS benchmark and client-side render optimizations that sit on top of Sodium.",
+	"authors": ["Flux"],
+	"license": "MIT",
+	"icon": "assets/flux/icon.png",
+	"environment": "client",
+	"entrypoints": {
+		"client": ["dev.flux.Flux"]
+	},
+	"mixins": ["flux.mixins.json"],
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~26.3",
+		"java": ">=25"
+	}
+}

@@ -964,6 +964,7 @@ impl GamesHomePage {
                 .child(div().w(px(340.)).child(Input::new(&self.sgdb_key).small()))
                 .child(Button::new("save-key").small().primary().label(if has_key { "Save and refresh art" } else { "Save key" }).on_click(cx.listener(|page, _, _, cx| {
                     let key = page.sgdb_key.read(cx).value().trim().to_string();
+                    crate::secrets::write_string(crate::secrets::STEAMGRIDDB, Some(&key));
                     InterfaceConfig::get_mut(cx).steamgriddb_key = (!key.is_empty()).then_some(key);
                     games::refresh_all_art(true, cx);
                     page.message = Some(("Looking up art for every game...".into(), false));
@@ -990,7 +991,7 @@ impl GamesHomePage {
                     .child("Open the API key page (after logging in)")
                     .on_click(|_, _, cx| cx.open_url("https://www.steamgriddb.com/profile/preferences/api"))))
             .child(div().text_xs().text_color(muted).child(
-                "Your key stays on this PC, in Flux's settings. Everyone uses their own key, so it's never shared.",
+                "Your key stays on this PC, in Windows Credential Manager. Everyone uses their own key, so it's never shared.",
             ))
             .into_any_element()
     }

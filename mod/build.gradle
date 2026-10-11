@@ -1,0 +1,74 @@
+plugins {
+	id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+base {
+	archivesName = "flux"
+}
+
+repositories {
+	// Optimization mods for the benchmark/dev runtime (Sodium etc.)
+	exclusiveContent {
+		forRepository {
+			maven {
+				name = "Modrinth"
+				url = "https://api.modrinth.com/maven"
+			}
+		}
+		filter {
+			includeGroup "maven.modrinth"
+		}
+	}
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	// The mod itself only needs Fabric API for the /maxfps command; it is optional at runtime.
+	compileOnly "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+	localRuntime "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+	// -PwithStack runs the client with the same optimization stack the launcher installs.
+	if (project.hasProperty("withStack")) {
+		localRuntime "maven.modrinth:sodium:${project.sodium_version}"
+		localRuntime "maven.modrinth:lithium:${project.lithium_version}"
+		localRuntime "maven.modrinth:ferrite-core:${project.ferritecore_version}"
+		localRuntime "maven.modrinth:immediatelyfast:${project.immediatelyfast_version}"
+		localRuntime "maven.modrinth:entityculling:${project.entityculling_version}"
+	}
+}
+
+processResources {
+	def version = project.version
+	inputs.property "version", version
+
+	filesMatching("fabric.mod.json") {
+		expand "version": version
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 25
+}
+
+java {
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
+}
+
+loom {
+	runs {
+		// ./gradlew runBenchClient [-PwithStack] [-Pbench=30] [-Pjfr=path.jfr]
+		benchClient {
+			client()
+			name = "Benchmark Client"
+			runDir = project.findProperty("benchDir") ?: "run-bench"
+			vmArg "-Dflux.bench=${project.findProperty('bench') ?: '30'}"
+			vmArg "-Dflux.bench.quit=true"
+			vmArg "-Xmx4G"
+			if (project.hasProperty("jfr")) {
+				vmArg "-XX:StartFlightRecording=filename=${project.property('jfr')},settings=profile,delay=20s,duration=40s"
+			}
+		}
+	}
+}

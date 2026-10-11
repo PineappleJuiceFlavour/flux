@@ -1,0 +1,8 @@
+{
+  "version": "1.1.0",
+  "github_repo": "PineappleJuiceFlavour/flux",
+  "microsoft_client_id": "130a6ac2-9a39-4656-9cd6-a8668d0491cb",
+  "mojang_approved": false,
+  "launcher_source": "C:\\path\to\flux",
+  "signing_key": "%USERPROFILE%\\.flux-signing\flux-update-key.json"
+}

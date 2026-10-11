@@ -171,8 +171,10 @@ pub struct InterfaceConfig {
     /// The sidebar's width before it was collapsed to icons, to go back to.
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub sidebar_expanded_width: f32,
-    /// The player's own SteamGridDB API key (free), for the best-fitting game art.
-    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    /// The player's own SteamGridDB API key (free), for the best-fitting game art. Kept in Windows
+    /// Credential Manager ("FluxLauncher_SteamGridDB"), never written to interface.json; an older
+    /// interface.json's key is read once and moved there.
+    #[serde(default, skip_serializing, deserialize_with = "schema::try_deserialize")]
     pub steamgriddb_key: Option<String>,
     /// Bumped when Flux learns better art sources, so existing games are looked up again once.
     #[serde(default, deserialize_with = "schema::try_deserialize")]

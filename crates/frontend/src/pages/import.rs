@@ -34,7 +34,8 @@ impl ImportPage {
             import_job: None,
             disabled_due_to_name_conflict: FxHashSet::default(),
             disabled_manually: FxHashSet::default(),
-            import_accounts: true,
+            // Off until the player asks: it copies their sign-in tokens from the other launcher.
+            import_accounts: false,
             import_instances: true,
             _get_import_job_task: Task::ready(()),
             _open_file_task: Task::ready(()),
@@ -207,7 +208,9 @@ impl Render for ImportPage {
                         .on_click(cx.listener(|page, checked, _, _| {
                             page.import_accounts = *checked;
                         }))
-                    );
+                    ).child(div().pl_6().text_xs().text_color(cx.theme().muted_foreground).child(
+                        "Copies that launcher's saved Microsoft sign-in tokens into Flux, so you stay signed in. Only tick this for a launcher you trust.",
+                    ));
                 }
                 import_box = import_box.child(Checkbox::new("instances").label(t::import::import_instances())
                     .checked(self.import_instances)

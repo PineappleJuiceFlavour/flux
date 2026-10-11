@@ -196,6 +196,11 @@ async fn install_update_inner(http_client: reqwest::Client, dirs: &LauncherDirec
         Ok(_) => {}
     }
 
+    // The manifest isn't signed, so its version is checked against the signed one: an old signed
+    // build can't be passed off as a newer version.
+    let current = option_env!("FLUX_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
+    check_signed_version(signature.trusted_comment(), &update.new_version, current)?;
+
     match update.install_type {
         UpdateInstallType::AppImage(appimage) => {
             let Some(filename) = appimage.file_name() else {
@@ -531,9 +536,35 @@ fn find_child_with_extension(folder: &Path, extension: &OsStr) -> std::io::Resul
     Ok(None)
 }
 
+/// The version in a signature's trusted comment ("...\tversion:1.1.0\t...") must be the one the
+/// manifest offers, and newer than the running Flux.
+fn check_signed_version(trusted_comment: &str, offered: &str, current: &str) -> Result<(), Arc<str>> {
+    let signed = trusted_comment.split('\t').find_map(|part| part.strip_prefix("version:"))
+        .ok_or_else(|| Arc::<str>::from("This update's signature doesn't name its version, so Flux won't install it"))?;
+    if signed != offered {
+        return Err(format!("This update is signed as version {signed}, not {offered}").into());
+    }
+    let parts = schema::forge::VersionFragment::string_to_parts;
+    if parts(signed) <= parts(current) {
+        return Err(format!("Refusing to install {signed}: it isn't newer than {current}").into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use base64::Engine;
+
+    #[test]
+    fn signed_version_must_match_and_be_newer() {
+        let check = super::check_signed_version;
+        let comment = "timestamp:1\tfile:Flux.exe\tversion:1.1.0\thashed";
+        assert!(check(comment, "1.1.0", "1.0.9").is_ok());
+        assert!(check(comment, "1.2.0", "1.0.9").is_err(), "manifest says a different version");
+        assert!(check(comment, "1.1.0", "1.1.0").is_err(), "same version");
+        assert!(check(comment, "1.1.0", "1.2.0").is_err(), "older version");
+        assert!(check("timestamp:1\tfile:Flux.exe\thashed", "1.1.0", "1.0.9").is_err(), "no version");
+    }
 
     /// FLUX_SIG_TEST=<file>|<base64 public key file>|<base64 signature file>: the same check
     /// install_update runs, on a file signed by Flux's release.py.

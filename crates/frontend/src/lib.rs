@@ -28,6 +28,7 @@ pub mod controller;
 pub mod controller_nav;
 pub mod chat;
 pub mod privacy;
+pub mod secrets;
 pub mod game_art;
 pub mod game_mods;
 pub mod win_native;

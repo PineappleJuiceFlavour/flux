@@ -1,0 +1,10 @@
+enableVsync:false
+maxFps:260
+renderDistance:12
+simulationDistance:8
+entityShadows:false
+renderClouds:"false"
+particles:1
+biomeBlendRadius:1
+inactivityFpsLimit:"afk"
+onboardAccessibility:false

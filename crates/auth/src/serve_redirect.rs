@@ -123,9 +123,8 @@ pub async fn start_server(
                 return Err(ProcessAuthorizationError::ServersideError(full_error));
             }
 
-            if let Some(state) = state
-                && &*state != pending_authroization.csrf_token.secret()
-            {
+            // A redirect with no state (or the wrong one) didn't come from this sign-in.
+            if state.as_deref() != Some(pending_authroization.csrf_token.secret().as_str()) {
                 let response = create_response(
                     "Error: CSRF Mismatch!",
                     "Did you reload the tab instead of going through the proper authorization flow?",

@@ -1,0 +1,54 @@
+[package]
+name = "frontend"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+t.workspace = true
+chrono.workspace = true
+ftree.workspace = true
+gpui.workspace = true
+gpui_platform.workspace = true
+gpui-component.workspace = true
+gpui-component-assets.workspace = true
+image.workspace = true
+lexical-sort.workspace = true
+lru.workspace = true
+rust-embed.workspace = true
+rustc-hash.workspace = true
+sanitize-filename.workspace = true
+anyhow.workspace = true
+bridge.workspace = true
+schema.workspace = true
+tokio.workspace = true
+once_cell.workspace = true
+ustr.workspace = true
+indexmap.workspace = true
+heapless.workspace = true
+intrusive-collections.workspace = true
+atomic-time.workspace = true
+reqwest_client.workspace = true
+reqwest.workspace = true
+uuid.workspace = true
+enumset.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rand.workspace = true
+relative-path.workspace = true
+parking_lot.workspace = true
+open.workspace = true
+directories.workspace = true
+log.workspace = true
+strum.workspace = true
+urlencoding.workspace = true
+futures.workspace = true
+itertools.workspace = true
+command.workspace = true
+hex.workspace = true
+base64.workspace = true
+sha2.workspace = true
+enum-map.workspace = true
+casefold.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true

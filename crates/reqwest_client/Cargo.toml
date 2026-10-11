@@ -1,0 +1,32 @@
+[package]
+name = "reqwest_client"
+version = "0.4.0-preview0"
+publish = false
+license = "Apache-2.0"
+edition = "2024"
+
+[lib]
+path = "src/reqwest_client.rs"
+
+[dependencies]
+gpui.workspace = true
+anyhow.workspace = true
+
+reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "c15662463bda39148ba154100dd44d3fba5873a4", default-features = false, features = [
+    "charset",
+    "http2",
+    "macos-system-configuration",
+    "multipart",
+    "rustls-tls-native-roots",
+    "socks",
+    "stream",
+], package = "zed-reqwest", version = "0.12.15-zed" }
+rustls = { version = "0.23.26" }
+rustls-platform-verifier = "0.5.0"
+bytes = "1.0"
+futures = "0.3"
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+regex = "1.5"
+
+[dev-dependencies]
+gpui.workspace = true

@@ -1,0 +1,2432 @@
+use std::{borrow::Cow, io::{BufRead, Read}, sync::{Arc, atomic::Ordering}, time::{Duration, Instant, SystemTime}};
+
+use auth::{credentials::AccountCredentials, models::MinecraftAccessToken, secret::PlatformSecretStorage};
+use bridge::{
+    install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath, InstallTarget}, instance::{ContentFolder, ContentSummary, ContentType, InstanceID}, keep_alive::KeepAlive, message::{AccountCapesResult, AccountSkinResult, EmbeddedOrRaw, GameOutputMsg, LogFiles, MessageToBackend, MessageToFrontend, QuickPlayLaunch}, meta::MetadataResult, modal_action::{ModalAction, ModalActionVisitUrl, ProgressTrackerFinishType}, serial::AtomicOptionSerial
+};
+use futures::TryFutureExt;
+use schema::{auxiliary::AuxiliaryContentMeta, content::{ContentInstallReason, ContentSource}, curseforge::CurseforgeGetModFilesRequest, loader::Loader, minecraft_profile::{MinecraftProfileResponse, SkinVariant}, modrinth::ModrinthLoader, quickplay::QuickplayPreset, version::{LaunchArgument, LaunchArgumentValue}};
+use serde::{Deserialize, Serialize};
+use strum::IntoEnumIterator;
+use tokio::{io::AsyncBufReadExt, sync::{Semaphore, TryAcquireError}};
+use ustr::Ustr;
+use uuid::Uuid;
+
+use crate::{
+    BackendState, CachedMinecraftProfile, LoginError, account::BackendAccount, arcfactory::ArcStrFactory, fs::FolderChanges, instance::Instance, launch::{ArgumentExpansionKey, LaunchError}, log_reader, metadata::{items::{AssetsIndexMetadataItem, CurseforgeChangelogMetadataItem, CurseforgeGetModFilesMetadataItem, CurseforgeSearchMetadataItem, FabricLoaderManifestMetadataItem, ForgeInstallerMavenMetadataItem, MinecraftVersionManifestMetadataItem, MinecraftVersionMetadataItem, ModrinthChangelogMetadataItem, ModrinthProjectMetadataItem, ModrinthProjectVersionsMetadataItem, ModrinthSearchMetadataItem, ModrinthV3VersionUpdateMetadataItem, ModrinthVersionUpdateMetadataItem, MojangJavaRuntimeComponentMetadataItem, MojangJavaRuntimesMetadataItem, NeoforgeInstallerMavenMetadataItem, VersionUpdateParameters, VersionV3LoaderFields, VersionV3UpdateParameters}, manager::MetaLoadError}, mod_metadata::{ContentUpdateAction, ContentUpdateKey}, skin_manager::SkinManager
+};
+
+impl BackendState {
+    pub async fn handle_message(self: &Arc<Self>, message: MessageToBackend) {
+        match message {
+            MessageToBackend::RequestMetadata { request, force_reload } => {
+                let meta = self.meta.clone();
+                let send = self.send.clone();
+                tokio::task::spawn(async move {
+                    let (result, keep_alive_handle) = match request {
+                        bridge::meta::MetadataRequest::MinecraftVersionManifest => {
+                            let (result, handle) = meta.fetch_with_keepalive(MinecraftVersionManifestMetadataItem, force_reload).await;
+                            (result.map(MetadataResult::MinecraftVersionManifest), handle)
+                        },
+                        bridge::meta::MetadataRequest::FabricLoaderManifest => {
+                            let (result, handle) = meta.fetch_with_keepalive(FabricLoaderManifestMetadataItem, force_reload).await;
+                            (result.map(MetadataResult::FabricLoaderManifest), handle)
+                        },
+                        bridge::meta::MetadataRequest::ForgeMavenManifest => {
+                            let (result, handle) = meta.fetch_with_keepalive(ForgeInstallerMavenMetadataItem, force_reload).await;
+                            (result.map(MetadataResult::ForgeMavenManifest), handle)
+                        },
+                        bridge::meta::MetadataRequest::NeoforgeMavenManifest => {
+                            let (result, handle) = meta.fetch_with_keepalive(NeoforgeInstallerMavenMetadataItem, force_reload).await;
+                            (result.map(MetadataResult::NeoforgeMavenManifest), handle)
+                        },
+                        bridge::meta::MetadataRequest::ModrinthSearch(ref search) => {
+                            let (result, handle) = meta.fetch_with_keepalive(ModrinthSearchMetadataItem(search), force_reload).await;
+                            (result.map(MetadataResult::ModrinthSearchResult), handle)
+                        },
+                        bridge::meta::MetadataRequest::ModrinthProjectVersions(ref project_versions) => {
+                            let (result, handle) = meta.fetch_with_keepalive(ModrinthProjectVersionsMetadataItem(project_versions.clone()), force_reload).await;
+                            (result.map(MetadataResult::ModrinthProjectVersionsResult), handle)
+                        },
+                        bridge::meta::MetadataRequest::ModrinthProject(ref project) => {
+                            let (result, handle) = meta.fetch_with_keepalive(ModrinthProjectMetadataItem(project), force_reload).await;
+                            (result.map(MetadataResult::ModrinthProjectResult), handle)
+                        },
+                        bridge::meta::MetadataRequest::ModrinthChangelog(ref request) => {
+                            let (result, handle) = meta.fetch_with_keepalive(ModrinthChangelogMetadataItem(request), force_reload).await;
+                            (result.map(MetadataResult::ModrinthChangelogResult), handle)
+                        },
+                        bridge::meta::MetadataRequest::CurseforgeSearch(ref search) => {
+                            let (result, handle) = meta.fetch_with_keepalive(CurseforgeSearchMetadataItem(search), force_reload).await;
+                            (result.map(MetadataResult::CurseforgeSearchResult), handle)
+                        },
+                        bridge::meta::MetadataRequest::CurseforgeGetModFiles(ref request) => {
+                            let (result, handle) = meta.fetch_with_keepalive(CurseforgeGetModFilesMetadataItem(request), force_reload).await;
+                            (result.map(MetadataResult::CurseforgeGetModFilesResult), handle)
+                        },
+                        bridge::meta::MetadataRequest::CurseforgeChangelog(ref request) => {
+                            let (result, handle) = meta.fetch_with_keepalive(CurseforgeChangelogMetadataItem(request), force_reload).await;
+                            (result.map(MetadataResult::CurseforgeChangelogResult), handle)
+                        },
+                    };
+                    let result = result.map_err(|err| format!("{}", err).into());
+                    send.send(MessageToFrontend::MetadataResult {
+                        request,
+                        result,
+                        keep_alive_handle
+                    });
+                });
+            },
+            MessageToBackend::RequestLoadWorlds { id } => {
+                tokio::task::spawn(Instance::load_worlds(self.clone(), id));
+            },
+            MessageToBackend::RequestLoadServers { id } => {
+                tokio::task::spawn(Instance::load_servers(self.clone(), id));
+            },
+            MessageToBackend::ReorderServers { id, from_index, to_index } => {
+                tokio::task::spawn(Instance::reorder_servers(self.clone(), id, from_index, to_index));
+            },
+            MessageToBackend::RequestLoadContentFolder { id, content_folder } => {
+                tokio::task::spawn(Instance::load_content(self.clone(), id, content_folder));
+            },
+            MessageToBackend::CreateInstance { name, version, loader, icon } => {
+                self.create_instance(&name, &version, loader, icon);
+            },
+            MessageToBackend::CreateMaxFpsInstance { name, version, nvidium, modal_action } => {
+                let this = self.clone();
+                tokio::spawn(async move {
+                    this.create_max_fps_instance(name, version, crate::max_fps::MaxFpsOptions { nvidium }, modal_action).await;
+                });
+            },
+            MessageToBackend::InstallEmulator { id, modal_action } => {
+                let this = self.clone();
+                tokio::spawn(async move {
+                    this.install_emulator(&id, modal_action).await;
+                });
+            },
+            MessageToBackend::DeleteInstance { id } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    let result = std::fs::remove_dir_all(&instance.root_path);
+                    if let Err(err) = result {
+                        self.send.send_error(format!("Unable to delete instance folder: {}", err));
+                    }
+                }
+            },
+            MessageToBackend::DuplicateInstance { id, name, modal_action } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    crate::duplicate::duplicate_instance(backend, id, &name, modal_action).await;
+                });
+            },
+            MessageToBackend::ExportInstance { id, format, options, output, modal_action } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    crate::export::export_instance(backend, id, format, options, output, modal_action).await;
+                });
+            },
+            MessageToBackend::RenameInstance { id, name } => {
+                self.rename_instance(id, &name).await;
+            },
+            MessageToBackend::SetInstanceMinecraftVersion { id, version } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        configuration.minecraft_version = version;
+                    });
+                }
+            },
+            MessageToBackend::SetInstanceLoader { id, loader } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        configuration.loader = loader;
+                        configuration.preferred_loader_version = None;
+                    });
+                }
+            },
+            MessageToBackend::SetInstancePreferredAccount { id, account } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                       instance.configuration.modify(|configuration| {
+                           configuration.preferred_account = account;
+                      });
+                 }
+            }
+            MessageToBackend::SetInstancePreferredLoaderVersion { id, loader_version } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        configuration.preferred_loader_version = loader_version.map(Ustr::from);
+                    });
+                }
+            },
+            MessageToBackend::SetInstanceUpdateChannel { id, update_channel } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        configuration.update_channel = update_channel;
+                    });
+                }
+            },
+            MessageToBackend::SetInstanceDisableFileSyncing { id, disable_file_syncing } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        configuration.disable_file_syncing = disable_file_syncing;
+                    });
+                }
+                self.apply_syncing_to_instance(id);
+            },
+            MessageToBackend::SetInstanceSandboxing { id, sandbox } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        configuration.sandbox = sandbox;
+                    });
+                }
+            },
+            MessageToBackend::SetInstanceMemory { id, memory } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        configuration.memory = Some(memory);
+                    });
+                }
+            },
+            MessageToBackend::SetInstanceWrapperCommand { id, wrapper_command } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        configuration.wrapper_command = Some(wrapper_command);
+                    });
+                }
+            },
+            MessageToBackend::SetInstanceJvmFlags { id, jvm_flags } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        configuration.jvm_flags = Some(jvm_flags);
+                    });
+                }
+            },
+            MessageToBackend::SetInstanceJvmBinary { id, jvm_binary } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        configuration.jvm_binary = Some(jvm_binary);
+                    });
+                }
+            },
+            MessageToBackend::SetInstanceLinuxWrapper { id, linux_wrapper } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        configuration.linux_wrapper = Some(linux_wrapper);
+                    });
+                }
+            },
+            MessageToBackend::SetInstanceSystemLibraries { id, system_libraries } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.configuration.modify(|configuration| {
+                        configuration.system_libraries = Some(system_libraries);
+                    });
+                }
+            },
+            MessageToBackend::SetInstanceIcon { id, icon } => {
+                let root_path = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    let root_path = instance.root_path.clone();
+                    instance.configuration.modify(|configuration| {
+                        configuration.instance_fallback_icon = None;
+                        if let Some(EmbeddedOrRaw::Embedded(ref e)) = icon {
+                            configuration.instance_fallback_icon = Some(Ustr::from(e));
+                        }
+                    });
+                    root_path
+                } else {
+                    return;
+                };
+
+                match icon {
+                    Some(EmbeddedOrRaw::Raw(image_bytes)) => {
+                        if let Ok(format) = image::guess_format(&*image_bytes) {
+                            if format == image::ImageFormat::Png {
+                                let icon_path = root_path.join("icon.png");
+                                if let Err(err) = crate::fs::write_safe(&icon_path, &*image_bytes) {
+                                    log::error!("Unable to save instance icon: {:?}", err);
+                                    self.send.send_error("Unable to save instance icon");
+                                    return;
+                                }
+                                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                                    instance.icon = Some(image_bytes);
+                                    self.send.send(instance.create_modify_message());
+                                }
+                            } else {
+                                self.send.send_error("Unable to apply icon: only pngs are supported");
+                            }
+                        } else {
+                            self.send.send_error("Unable to apply icon: unknown format");
+                        }
+                    },
+                    Some(EmbeddedOrRaw::Embedded(_)) => {
+                        let icon_path = root_path.join("icon.png");
+                        if icon_path.exists() {
+                            let _ = std::fs::remove_file(&icon_path);
+                        }
+                        if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                            instance.icon = None;
+                            self.send.send(instance.create_modify_message());
+                        }
+                    },
+                    None => {
+                        let icon_path = root_path.join("icon.png");
+                        if icon_path.exists() {
+                            let _ = std::fs::remove_file(&icon_path);
+                        }
+                        if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                            instance.icon = None;
+                            self.send.send(instance.create_modify_message());
+                        }
+                    },
+                }
+            },
+            MessageToBackend::KillInstance { id } => {
+                let mut instance_state = self.instance_state.write();
+                let Some(instance) = instance_state.instances.get_mut(id) else {
+                    self.send.send_error("Can't kill instance, unknown id");
+                    return;
+                };
+
+                if instance.processes.is_empty() && instance.closing_processes.is_empty() {
+                    self.send.send_error("Can't kill instance, instance wasn't running");
+                    return;
+                }
+
+                for (process, _) in instance.closing_processes.drain(..) {
+                    let result = process.kill();
+
+                    if let Err(err) = result {
+                        self.send.send_error("Failed to kill instance");
+                        log::error!("Failed to kill instance: {err:?}");
+                    }
+                }
+
+                let now = Instant::now();
+                for mut process in instance.processes.drain(..) {
+                    let mut result = process.close();
+                    if result.is_err() {
+                        result = process.kill();
+                    } else {
+                        instance.closing_processes.push((process, now + Duration::from_secs(3)));
+                    }
+
+                    if let Err(err) = result {
+                        self.send.send_error("Failed to kill instance");
+                        log::error!("Failed to kill instance: {err:?}");
+                    }
+                }
+
+                instance.update_session();
+                self.send.send(instance.create_modify_message());
+                self.restore_mods_folder_if_stopped(instance);
+            },
+            MessageToBackend::StartInstanceByName { name, quick_play } => {
+                let mut id = None;
+
+                for instance in self.instance_state.read().instances.iter() {
+                    if instance.name == &name {
+                        id = Some(instance.id);
+                        break;
+                    } else if instance.name.eq_ignore_ascii_case(&name) {
+                        id = Some(instance.id);
+                    }
+                }
+
+                if let Some(id) = id {
+                    self.start_instance(id, quick_play, None, Default::default()).await
+                }
+            },
+            MessageToBackend::StartInstance {
+                id,
+                quick_play,
+                live_game_output,
+                modal_action,
+            } => {
+                self.start_instance(id, quick_play, live_game_output, modal_action).await
+            },
+            MessageToBackend::StartQuickplayInstance {
+                preset,
+                minecraft_version,
+                quick_play,
+                live_game_output,
+                modal_action
+            } => {
+                let Some(id) = self.setup_quickplay_instance(preset, minecraft_version, &modal_action).await else {
+                    return;
+                };
+                self.start_instance(id, quick_play, live_game_output, modal_action).await
+            },
+            MessageToBackend::SetContentEnabled { id, content_ids: mod_ids, enabled } => {
+                let mut instance_state = self.instance_state.write();
+                let Some(instance) = instance_state.instances.get_mut(id) else {
+                    return;
+                };
+
+                let mut cannot_modify_while_running = false;
+
+                for mod_id in mod_ids {
+                    if let Some((instance_mod, folder)) = instance.try_get_content(mod_id) {
+                        if instance_mod.enabled == enabled {
+                            continue;
+                        }
+
+                        if folder == ContentFolder::Mods && !instance.processes.is_empty() {
+                            cannot_modify_while_running = true;
+                            continue;
+                        }
+
+                        let mut new_path = instance_mod.path.to_path_buf();
+                        if instance_mod.enabled {
+                            new_path.add_extension("disabled");
+                        } else {
+                            new_path.set_extension("");
+                        };
+
+                        let _ = std::fs::rename(&instance_mod.path, new_path);
+                    }
+                }
+
+                if cannot_modify_while_running {
+                    self.send.send_warning("Cannot modify mods folder while instance is running");
+                }
+            },
+            MessageToBackend::SetContentChildEnabled { id, content_id: mod_id, child_id, child_name, child_filename, disabled_default, enabled } => {
+                let mut instance_state = self.instance_state.write();
+                if let Some(instance) = instance_state.instances.get_mut(id)
+                    && let Some((instance_mod, folder)) = instance.try_get_content(mod_id)
+                {
+                    let Some(aux_path) = crate::fs::pandora_aux_path_for_content(instance_mod) else {
+                        return;
+                    };
+
+                    if folder == ContentFolder::Mods && !instance.processes.is_empty() {
+                        self.send.send_warning("Cannot modify mods folder while instance is running");
+                        return;
+                    }
+
+                    let mut aux: AuxiliaryContentMeta = crate::fs::read_json(&aux_path).unwrap_or_default();
+
+                    let mut changed = false;
+
+                    if disabled_default {
+                        if enabled {
+                            if let Some(child_id) = child_id {
+                                changed |= aux.disabled_children.enabled_ids.insert(child_id);
+                            } else if let Some(child_name) = child_name {
+                                changed |= aux.disabled_children.enabled_names.insert(child_name);
+                            } else {
+                                changed |= aux.disabled_children.enabled_filenames.insert(child_filename);
+                            }
+                        } else {
+                            if let Some(child_id) = child_id {
+                                changed |= aux.disabled_children.enabled_ids.remove(&child_id);
+                            }
+                            if let Some(child_name) = child_name {
+                                changed |= aux.disabled_children.enabled_names.remove(&child_name);
+                            }
+                            changed |= aux.disabled_children.enabled_filenames.remove(&child_filename);
+                        }
+                    } else {
+                        if enabled {
+                            if let Some(child_id) = child_id {
+                                changed |= aux.disabled_children.disabled_ids.remove(&child_id);
+                            }
+                            if let Some(child_name) = child_name {
+                                changed |= aux.disabled_children.disabled_names.remove(&child_name);
+                            }
+                            changed |= aux.disabled_children.disabled_filenames.remove(&child_filename);
+                        } else {
+                            if let Some(child_id) = child_id {
+                                changed |= aux.disabled_children.disabled_ids.insert(child_id);
+                            } else if let Some(child_name) = child_name {
+                                changed |= aux.disabled_children.disabled_names.insert(child_name);
+                            } else {
+                                changed |= aux.disabled_children.disabled_filenames.insert(child_filename);
+                            }
+                        }
+                    }
+
+                    if changed {
+                        let bytes = match serde_json::to_vec(&aux) {
+                            Ok(bytes) => bytes,
+                            Err(err) => {
+                                log::error!("Unable to serialize AuxiliaryContentMeta: {err:?}");
+                                self.send.send_error("Unable to serialize AuxiliaryContentMeta");
+                                return;
+                            },
+                        };
+                        if let Err(err) = crate::fs::write_safe(&aux_path, &bytes) {
+                            log::error!("Unable to save aux meta: {err:?}");
+                            self.send.send_error("Unable to save aux meta");
+                        }
+                    }
+                }
+            },
+            MessageToBackend::DownloadContentChildren { id, content_id, modal_action } => {
+                let (summary, loader, minecraft_version) = {
+                    let mut instance_state = self.instance_state.write();
+                    let Some(instance) = instance_state.instances.get_mut(id) else {
+                        return;
+                    };
+                    let Some((summary, _)) = instance.try_get_content(content_id) else {
+                        return;
+                    };
+                    let summary = summary.clone();
+                    let configuration = instance.configuration.get();
+                    (summary, configuration.loader, configuration.minecraft_version)
+                };
+
+                let this = self.clone();
+                tokio::spawn(async move {
+                    this.download_modpack_children(&summary, loader, minecraft_version, &modal_action).await;
+                    if let Some(instance) = this.instance_state.write().instances.get_mut(id) {
+                        let mut changes = FolderChanges::no_changes();
+                        changes.dirty_path(summary.path);
+                        instance.mark_content_dirty(&this, ContentFolder::Mods, changes, true);
+                    }
+                    modal_action.set_finished();
+                    this.send.send(MessageToFrontend::Refresh);
+                });
+            },
+            MessageToBackend::DownloadAllMetadata => {
+                self.download_all_metadata().await;
+            },
+            MessageToBackend::InstallContent { content, modal_action } => {
+                let this = self.clone();
+
+                tokio::spawn(async move {
+                    this.install_content(content, modal_action.clone()).await;
+                    modal_action.set_finished();
+                    this.send.send(MessageToFrontend::Refresh);
+                });
+            },
+            MessageToBackend::CreateInstanceFromFile { file, modal_action } => {
+                let summary = self.mod_metadata_manager.get_path(&file);
+
+                // right now only .mrpack importing is used
+                let ContentType::ModrinthModpack { dependencies, .. } = &summary.extra else {
+                    modal_action.set_finished_with_error("Not a .mrpack file".into());
+                    return;
+                };
+
+                let Some(name) = summary.name.clone() else {
+                    modal_action.set_finished_with_error("Unable to determine name from modpack".into());
+                    return;
+                };
+
+                let mut minecraft_version = None;
+                let mut loader = Loader::Vanilla;
+                for (key, value) in dependencies {
+                    match &**key {
+                        "forge" => loader = Loader::Forge,
+                        "neoforge" => loader = Loader::NeoForge,
+                        "fabric-loader" => loader = Loader::Fabric,
+                        "minecraft" => minecraft_version = Some(value.clone()),
+                        _ => {}
+                    }
+                }
+
+                let Some(minecraft_version) = minecraft_version else {
+                    modal_action.set_finished_with_error("Unable to determine minecraft version from modpack".into());
+                    return;
+                };
+
+                let content_install = ContentInstall {
+                    target: InstallTarget::NewInstance { name: Some(name), preset: None },
+                    loader,
+                    minecraft_version: minecraft_version.into(),
+                    files: Arc::from([
+                        ContentInstallFile {
+                            replace_old: None,
+                            path: ContentInstallPath::Automatic,
+                            download: ContentDownload::File { path: file },
+                            content_source: ContentSource::Manual,
+                            reason: ContentInstallReason::Standalone,
+                        }
+                    ]),
+                };
+
+                let this = self.clone();
+
+                tokio::spawn(async move {
+                    this.install_content(content_install, modal_action.clone()).await;
+                    modal_action.set_finished();
+                    this.send.send(MessageToFrontend::Refresh);
+                });
+            },
+            MessageToBackend::DeleteContent { id, content_ids: mod_ids } => {
+                let mut instance_state = self.instance_state.write();
+                let Some(instance) = instance_state.instances.get_mut(id) else {
+                    self.send.send_error("Unable to find instance, unknown id");
+                    return;
+                };
+
+                let mut cannot_modify_while_running = false;
+
+                for mod_id in mod_ids {
+                    let Some((instance_mod, folder)) = instance.try_get_content(mod_id) else {
+                        self.send.send_error("Unable to delete mod, invalid id");
+                        continue;
+                    };
+
+                    if folder == ContentFolder::Mods && !instance.processes.is_empty() {
+                        cannot_modify_while_running = true;
+                        continue;
+                    }
+
+                    _ = std::fs::remove_file(&instance_mod.path);
+
+                    if let Some(aux_path) = crate::fs::pandora_aux_path_for_content(&instance_mod) {
+                        _ = std::fs::remove_file(aux_path);
+                    }
+                }
+
+                if cannot_modify_while_running {
+                    self.send.send_warning("Cannot modify mods folder while instance is running");
+                }
+            },
+            MessageToBackend::UpdateCheck { instance: id, modal_action } => {
+                let (loader, version, update_channel) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    let configuration = instance.configuration.get();
+                    (configuration.loader, configuration.minecraft_version, configuration.update_channel)
+                } else {
+                    self.send.send_error("Can't update instance, unknown id");
+                    modal_action.set_finished_with_error("Can't update instance, unknown id".into());
+                    return;
+                };
+
+                let mut content = Vec::new();
+                for folder in ContentFolder::iter() {
+                    let Some(summaries) = Instance::load_content(self.clone(), id, folder).await else {
+                        modal_action.set_finished();
+                        return;
+                    };
+                    content.extend_from_slice(&*summaries);
+                }
+
+                let instance_modrinth_loader = loader.as_modrinth_loader();
+                if instance_modrinth_loader == ModrinthLoader::Unknown {
+                    modal_action.set_finished_with_error("Unable to update instance, unsupported loader".into());
+                    return;
+                }
+
+                let tracker = modal_action.push_tracker("Checking content".into());
+                tracker.set_total(content.len());
+
+                let semaphore = Semaphore::new(8);
+
+                let meta = self.meta.clone();
+
+                let mut futures = Vec::new();
+
+                struct UpdateResult {
+                    mod_summary: Arc<ContentSummary>,
+                    action: ContentUpdateAction,
+                }
+
+                { // Scope is needed so await doesn't complain about the non-send RwLockReadGuard
+                    let sources = self.mod_metadata_manager.read_content_sources();
+                    for summary in content.iter() {
+                        let source = sources.get(&summary.content_summary.hash);
+                        let semaphore = &semaphore;
+                        let meta = &meta;
+                        let tracker = &tracker;
+                        futures.push(async move {
+                            match source {
+                                ContentSource::Manual => {
+                                    tracker.add_count(1);
+                                    Ok(ContentUpdateAction::ManualInstall)
+                                },
+                                ContentSource::ModrinthUnknown | ContentSource::ModrinthProject { .. } => {
+                                    let permit = semaphore.acquire().await.unwrap();
+
+                                    let sha1: Arc<str> = hex::encode(summary.content_summary.hash).into();
+                                    let result = async {
+                                        for &version_types in update_channel.modrinth_version_types_with_fallback().iter() {
+                                            let fetch_result = match &summary.content_summary.extra {
+                                                ContentType::ModrinthModpack { .. } => {
+                                                    meta.fetch(ModrinthV3VersionUpdateMetadataItem {
+                                                        sha1: sha1.clone(),
+                                                        params: VersionV3UpdateParameters {
+                                                            loaders: ["mrpack".into()].into(),
+                                                            loader_fields: VersionV3LoaderFields {
+                                                                mrpack_loaders: [instance_modrinth_loader].into(),
+                                                                game_versions: [version].into(),
+                                                            },
+                                                            version_types,
+                                                        },
+                                                    }).await
+                                                },
+                                                extra => {
+                                                    let loaders = extra.modrinth_loaders(instance_modrinth_loader);
+                                                    meta.fetch(ModrinthVersionUpdateMetadataItem {
+                                                        sha1: sha1.clone(),
+                                                        params: VersionUpdateParameters {
+                                                            loaders,
+                                                            game_versions: [version].into(),
+                                                            version_types,
+                                                        }
+                                                    }).await
+                                                },
+                                            };
+
+                                            if !matches!(fetch_result, Err(MetaLoadError::NonOK(404))) {
+                                                return fetch_result;
+                                            }
+                                        }
+
+                                        Err(MetaLoadError::NonOK(404))
+                                    }.await;
+
+                                    drop(permit);
+
+                                    tracker.add_count(1);
+
+                                    if let Err(MetaLoadError::NonOK(404)) = result {
+                                        return Ok(ContentUpdateAction::ErrorNotFound);
+                                    }
+
+                                    let result = result?;
+
+                                    if let ContentSource::ModrinthProject { ref project_id } = source {
+                                        if &result.0.project_id != project_id {
+                                            log::error!("Refusing to update {:?}, mismatched project ids: expected {}, got {}",
+                                                summary.content_summary.hash, project_id, &result.0.project_id);
+                                            return Ok(ContentUpdateAction::ErrorNotFound);
+                                        }
+                                    }
+
+                                    let install_file = result
+                                        .0
+                                        .files
+                                        .iter()
+                                        .find(|file| file.primary)
+                                        .unwrap_or(result.0.files.first().unwrap());
+
+                                    let mut latest_hash = [0u8; 20];
+                                    let Ok(_) = hex::decode_to_slice(&*install_file.hashes.sha1, &mut latest_hash) else {
+                                        return Ok(ContentUpdateAction::ErrorInvalidHash);
+                                    };
+
+                                    if latest_hash == summary.content_summary.hash {
+                                        Ok(ContentUpdateAction::AlreadyUpToDate)
+                                    } else {
+                                        Ok(ContentUpdateAction::Modrinth {
+                                            file: install_file.clone(),
+                                            project_id: result.0.project_id.clone(),
+                                        })
+                                    }
+                                },
+                                ContentSource::CurseforgeProject { project_id } => {
+                                    let permit = semaphore.acquire().await.unwrap();
+
+                                    let mod_loader_type = summary.content_summary.extra.curseforge_loader().map(|loader| loader as u32);
+
+                                    let result = async {
+                                        for &release_types in update_channel.curseforge_release_types_with_fallback().iter() {
+                                            let fetch_result = meta.fetch(CurseforgeGetModFilesMetadataItem(
+                                                &CurseforgeGetModFilesRequest {
+                                                    mod_id: project_id,
+                                                    game_version: Some(version),
+                                                    mod_loader_type,
+                                                    release_types: Some(release_types),
+                                                    page_size: Some(1)
+                                                }
+                                            )).await;
+
+                                            if match &fetch_result {
+                                                Err(MetaLoadError::NonOK(404)) => false,
+                                                Ok(files) => !files.data.is_empty(),
+                                                Err(_) => true,
+                                            } {
+                                                return fetch_result;
+                                            }
+                                        }
+
+                                        Err(MetaLoadError::NonOK(404))
+                                    }.await;
+
+                                    drop(permit);
+
+                                    tracker.add_count(1);
+
+                                    if let Err(MetaLoadError::NonOK(404)) = result {
+                                        return Ok(ContentUpdateAction::ErrorNotFound);
+                                    }
+
+                                    let result = result?;
+
+                                    let Some(file) = result.data.first() else {
+                                        return Ok(ContentUpdateAction::ErrorNotFound);
+                                    };
+
+                                    if file.mod_id != project_id {
+                                        log::error!("Refusing to update {:?}, mismatched project ids: expected {}, got {}",
+                                            summary.content_summary.hash, project_id, file.mod_id);
+                                        return Ok(ContentUpdateAction::ErrorNotFound);
+                                    }
+
+                                    let sha1 = file.hashes.iter()
+                                        .find(|hash| hash.algo == 1).map(|hash| &hash.value);
+                                    let Some(sha1) = sha1 else {
+                                        return Ok(ContentUpdateAction::ErrorInvalidHash);
+                                    };
+
+                                    let mut latest_hash = [0u8; 20];
+                                    let Ok(_) = hex::decode_to_slice(&**sha1, &mut latest_hash) else {
+                                        return Ok(ContentUpdateAction::ErrorInvalidHash);
+                                    };
+
+                                    if latest_hash == summary.content_summary.hash {
+                                        Ok(ContentUpdateAction::AlreadyUpToDate)
+                                    } else {
+                                        Ok(ContentUpdateAction::Curseforge {
+                                            file: file.clone(),
+                                            project_id,
+                                        })
+                                    }
+                                }
+                            }
+                        }.map_ok(|action| UpdateResult {
+                            mod_summary: summary.content_summary.clone(),
+                            action,
+                        }));
+                    }
+                }
+
+                let results: Result<Vec<UpdateResult>, MetaLoadError> = futures::future::try_join_all(futures).await;
+
+                match results {
+                    Ok(updates) => {
+                        let mut meta_updates = self.mod_metadata_manager.updates.write();
+
+                        for update in updates {
+                            meta_updates.insert(ContentUpdateKey {
+                                hash: update.mod_summary.hash,
+                                loader,
+                                version,
+                            }, update.action);
+                        }
+
+                        drop(meta_updates);
+
+                        if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                            for content_folder in ContentFolder::iter() {
+                                instance.mark_content_dirty(self, content_folder, FolderChanges::all_dirty(), true);
+                            }
+                        }
+                    },
+                    Err(error) => {
+                        tracker.set_finished(ProgressTrackerFinishType::Error);
+                        modal_action.set_finished_with_error(format!("Error checking for updates: {}", error).into());
+                        return;
+                    },
+                }
+
+                tracker.set_finished(ProgressTrackerFinishType::Normal);
+                modal_action.set_finished();
+            },
+            MessageToBackend::UpdateContent { instance: id, content_id: mod_id, modal_action } => {
+                let content_install = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    let configuration = instance.configuration.get();
+                    let (loader, minecraft_version) = (configuration.loader, configuration.minecraft_version);
+                    let Some((mod_summary, _)) = instance.try_get_content(mod_id) else {
+                        self.send.send_error("Can't update mod in instance, unknown mod id");
+                        modal_action.set_finished();
+                        return;
+                    };
+
+                    let Some(update_info) = self.mod_metadata_manager.updates.read().get(&ContentUpdateKey {
+                        hash: mod_summary.content_summary.hash,
+                        loader: loader,
+                        version: minecraft_version
+                    }).cloned() else {
+                        self.send.send_error("Can't update mod in instance, missing update action");
+                        modal_action.set_finished();
+                        return;
+                    };
+
+                    match update_info {
+                        ContentUpdateAction::ErrorNotFound => {
+                            self.send.send_error("Can't update mod in instance, 404 not found");
+                            modal_action.set_finished();
+                            return;
+                        },
+                        ContentUpdateAction::ErrorInvalidHash => {
+                            self.send.send_error("Can't update mod in instance, returned invalid hash");
+                            modal_action.set_finished();
+                            return;
+                        },
+                        ContentUpdateAction::AlreadyUpToDate => {
+                            self.send.send_error("Can't update mod in instance, already up-to-date");
+                            modal_action.set_finished();
+                            return;
+                        },
+                        ContentUpdateAction::ManualInstall => {
+                            self.send.send_error("Can't update mod in instance, mod was manually installed");
+                            modal_action.set_finished();
+                            return;
+                        },
+                        ContentUpdateAction::Modrinth { file, project_id } => {
+                            let mut path = mod_summary.path.with_file_name(&*file.filename);
+                            if !mod_summary.enabled {
+                                path.add_extension("disabled");
+                            }
+
+                            let mut hash = [0u8; 20];
+                            let Ok(_) = hex::decode_to_slice(&*file.hashes.sha1, &mut hash) else {
+                                log::warn!("File {} has invalid sha1: {}", file.filename, file.hashes.sha1);
+                                return;
+                            };
+
+                            debug_assert!(path.is_absolute());
+                            ContentInstall {
+                                target: InstallTarget::Instance(id),
+                                loader,
+                                minecraft_version,
+                                files: [ContentInstallFile {
+                                    replace_old: Some(mod_summary.path.clone()),
+                                    path: bridge::install::ContentInstallPath::Raw(path.into()),
+                                    download: ContentDownload::Url {
+                                        url: file.url.clone(),
+                                        sha1: hash,
+                                        size: file.size,
+                                    },
+                                    content_source: ContentSource::ModrinthProject { project_id },
+                                    reason: ContentInstallReason::Update,
+                                }].into(),
+                            }
+                        },
+                        ContentUpdateAction::Curseforge { file, project_id } => {
+                            let mut path = mod_summary.path.with_file_name(&*file.file_name);
+                            if !mod_summary.enabled {
+                                path.add_extension("disabled");
+                            }
+                            debug_assert!(path.is_absolute());
+
+                            let sha1 = file.hashes.iter()
+                                .find(|hash| hash.algo == 1).map(|hash| &hash.value);
+                            let Some(sha1) = sha1 else {
+                                self.send.send_error("Can't update mod in instance, missing sha1 hash");
+                                modal_action.set_finished();
+                                return;
+                            };
+
+                            let mut hash = [0u8; 20];
+                            let Ok(_) = hex::decode_to_slice(&**sha1, &mut hash) else {
+                                log::warn!("File {} has invalid sha1: {}", file.file_name, sha1);
+                                return;
+                            };
+
+                            let Some(url) = file.download_url.clone() else {
+                                self.send.send_error("Can't update mod in instance, author has blocked third party downloads");
+                                modal_action.set_finished();
+                                return;
+                            };
+
+                            ContentInstall {
+                                target: InstallTarget::Instance(id),
+                                loader,
+                                minecraft_version,
+                                files: [ContentInstallFile {
+                                    replace_old: Some(mod_summary.path.clone()),
+                                    path: bridge::install::ContentInstallPath::Raw(path.into()),
+                                    download: ContentDownload::Url {
+                                        url,
+                                        sha1: hash,
+                                        size: file.file_length as usize,
+                                    },
+                                    content_source: ContentSource::CurseforgeProject { project_id },
+                                    reason: ContentInstallReason::Update,
+                                }].into(),
+                            }
+                        },
+                    }
+                } else {
+                    self.send.send_error("Can't update mod in instance, unknown instance id");
+                    modal_action.set_finished();
+                    return;
+                };
+
+                self.install_content(content_install, modal_action.clone()).await;
+                modal_action.set_finished();
+                self.send.send(MessageToFrontend::Refresh);
+            },
+            MessageToBackend::UnzipModpack { id, content_id, modal_action } => {
+                let (summary, loader, minecraft_version, dot_minecraft_dir, mods_dir) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    let Some((summary, _)) = instance.try_get_content(content_id) else {
+                        return;
+                    };
+                    let summary = summary.clone();
+
+                    let cfg = instance.configuration.get();
+                    (summary, cfg.loader, cfg.minecraft_version, instance.dot_minecraft_path.clone(), instance.content_state[ContentFolder::Mods].path.clone())
+                } else {
+                    return;
+                };
+
+                let modpack_path = summary.path.clone();
+
+                let mod_copies = self.apply_modpack_and_collect_mods(loader, minecraft_version,
+                    &[summary], &dot_minecraft_dir, &mods_dir, &modal_action).await;
+
+                let copy_tracker = modal_action.push_tracker("Copying mod files".into());
+                self.apply_copies_to_mods_dir(mod_copies, &mods_dir, &copy_tracker);
+                copy_tracker.set_finished(ProgressTrackerFinishType::Normal);
+
+                if let Err(err) = std::fs::remove_file(modpack_path) {
+                    self.send.send_error(format!("Unable to delete original modpack: {err}"));
+                }
+
+                modal_action.set_finished();
+            },
+            MessageToBackend::Sleep5s => {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            },
+            MessageToBackend::ReadLog { path, send } => {
+                let frontend = self.send.clone();
+                let serial = AtomicOptionSerial::default();
+
+                let file = match std::fs::File::open(path) {
+                    Ok(file) => file,
+                    Err(e) => {
+                        let error = format!("Unable to read file: {e}");
+                        for line in error.split('\n') {
+                            let replaced = log_reader::replace(line.trim_ascii_end());
+                            if send.send(replaced.into()).await.is_err() {
+                                return;
+                            }
+                        }
+                        frontend.send_with_serial(MessageToFrontend::Refresh, &serial);
+                        return;
+                    },
+                };
+
+                let mut reader = std::io::BufReader::new(file);
+                let Ok(buffer) = reader.fill_buf() else {
+                    return;
+                };
+                if buffer.len() >= 2 && buffer[0] == 0x1F && buffer[1] == 0x8B {
+                    let gz_decoder = flate2::bufread::GzDecoder::new(reader);
+                    let mut buf_reader = std::io::BufReader::new(gz_decoder);
+                    tokio::task::spawn_blocking(move || {
+                        let mut line = String::new();
+                        let mut factory = ArcStrFactory::default();
+                        loop {
+                            match buf_reader.read_line(&mut line) {
+                                Ok(0) => return,
+                                Ok(_) => {
+                                    let replaced = log_reader::replace(line.trim_ascii_end());
+                                    if send.blocking_send(factory.create(&replaced)).is_err() {
+                                        return;
+                                    }
+                                    line.clear();
+                                    frontend.send_with_serial(MessageToFrontend::Refresh, &serial);
+                                },
+                                Err(e) => {
+                                    let error = format!("Error while reading file: {e}");
+                                    for line in error.split('\n') {
+                                        let replaced = log_reader::replace(line.trim_ascii_end());
+                                        if send.blocking_send(factory.create(&replaced)).is_err() {
+                                            return;
+                                        }
+                                    }
+                                    frontend.send_with_serial(MessageToFrontend::Refresh, &serial);
+                                    return;
+                                },
+                            }
+                        }
+                    });
+                    return;
+                }
+
+                let initial_data: Vec<u8> = buffer.into();
+                let file = reader.into_inner();
+                let mut reader = tokio::io::BufReader::new(tokio::fs::File::from_std(file));
+
+                tokio::task::spawn(async move {
+                    let mut factory = ArcStrFactory::default();
+                    let mut remaining = initial_data.as_slice();
+                    while let Some(index) = memchr::memchr(b'\n', remaining) {
+                        let line = &remaining[..index+1];
+                        remaining = &remaining[index+1..];
+
+                        if send_log_line(&line, &send, &mut factory).await.is_err() {
+                            return;
+                        }
+                        frontend.send_with_serial(MessageToFrontend::Refresh, &serial);
+                    }
+
+                    let remaining = remaining.trim_ascii_end();
+                    let remaining_len = remaining.len();
+                    let mut line = initial_data;
+                    if remaining_len == 0 {
+                        line.clear();
+                    } else {
+                        let from = line.len() - remaining_len;
+                        line.copy_within(from.., 0);
+                        line.truncate(remaining_len);
+                    };
+
+                    loop {
+                        tokio::select! {
+                            _ = send.closed() => {
+                                return;
+                            },
+                            read = reader.read_until('\n' as u8, &mut line) => match read {
+                                Ok(0) => {
+                                    // EOF reached. If this file is being actively written to (e.g. latest.log),
+                                    // then there could be more data
+                                    tokio::time::sleep(Duration::from_millis(250)).await;
+                                },
+                                Ok(_) => {
+                                    if line.last() != Some(&b'\n') {
+                                        // Didn't read the full line, wait a bit and try again
+                                        tokio::time::sleep(Duration::from_millis(250)).await;
+                                        continue;
+                                    }
+
+                                    if send_log_line(&line, &send, &mut factory).await.is_err() {
+                                        return;
+                                    }
+
+                                    frontend.send_with_serial(MessageToFrontend::Refresh, &serial);
+                                    line.clear();
+                                },
+                                Err(e) => {
+                                    let error = format!("Error while reading file: {e}");
+                                    for line in error.split('\n') {
+                                        let replaced = log_reader::replace(line.trim_ascii_end());
+                                        if send.send(factory.create(&replaced)).await.is_err() {
+                                            return;
+                                        }
+                                    }
+                                    frontend.send_with_serial(MessageToFrontend::Refresh, &serial);
+                                    return;
+                                },
+                            }
+                        }
+                    }
+                });
+            },
+            MessageToBackend::GetLogFiles { instance: id, channel } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    let logs = instance.dot_minecraft_path.join("logs");
+
+                    if let Ok(read_dir) = std::fs::read_dir(logs) {
+                        let mut paths_with_time = Vec::new();
+                        let mut total_gzipped_size = 0;
+
+                        for file in read_dir {
+                            let Ok(entry) = file else {
+                                continue;
+                            };
+                            let Ok(metadata) = entry.metadata() else {
+                                continue;
+                            };
+                            let filename = entry.file_name();
+                            let Some(filename) = filename.to_str() else {
+                                continue;
+                            };
+
+                            if filename.ends_with(".log.gz") {
+                                total_gzipped_size += metadata.len();
+                            } else if !filename.ends_with(".log") {
+                                continue;
+                            }
+
+                            let created = metadata.created().unwrap_or(SystemTime::UNIX_EPOCH);
+                            let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+
+                            paths_with_time.push((Arc::from(entry.path()), created.max(modified)));
+                        }
+
+                        paths_with_time.sort_by_key(|(_, t)| *t);
+                        let paths = paths_with_time.into_iter().map(|(p, _)| p).rev().collect();
+
+                        let _ = channel.send(LogFiles { paths, total_gzipped_size: total_gzipped_size.min(usize::MAX as u64) as usize });
+                    }
+                }
+            },
+            MessageToBackend::GetImportFromOtherLauncherJob { channel, launcher, path } => {
+                let result = crate::launcher_import::get_import_from_other_launcher_job(launcher, path);
+                _ = channel.send(result);
+            },
+            MessageToBackend::GetSyncState { channel } => {
+                let result = crate::syncing::get_sync_state(&self.config.lock().get().sync_targets, &mut *self.instance_state.write(), &self.directories);
+
+                match result {
+                    Ok(state) => {
+                        _ = channel.send(state);
+                    },
+                    Err(error) => {
+                        self.send.send_error(format!("Error while getting sync state: {error}"));
+                    },
+                }
+            },
+            MessageToBackend::SetSyncing { target, is_file, value } => {
+                let mut write = self.config.lock();
+
+                let result = if value {
+                    crate::syncing::enable_all(&target, is_file, &mut *self.instance_state.write(), &self.directories)
+                } else {
+                    crate::syncing::disable_all(&target, is_file, &self.directories).map(|_| true)
+                };
+
+                match result {
+                    Ok(success) => {
+                        if !success {
+                            self.send.send_error("Unable to enable syncing");
+                            return;
+                        }
+                    },
+                    Err(error) => {
+                        self.send.send_error(format!("Error while enabling syncing: {error}"));
+                        return;
+                    },
+                }
+
+                write.modify(|config| {
+                    let (set, other_set) = if is_file {
+                        (&mut config.sync_targets.files, &mut config.sync_targets.folders)
+                    } else {
+                        (&mut config.sync_targets.folders, &mut config.sync_targets.files)
+                    };
+
+                    other_set.remove(&target);
+                    if value {
+                        _ = set.insert(target);
+                    } else {
+                        set.remove(&target);
+                    }
+                });
+            },
+            MessageToBackend::GetBackendConfiguration { channel } => {
+                _ = channel.send(self.config.lock().get().clone());
+            },
+            MessageToBackend::SetLaunchDefaults { memory, jvm_flags, jvm_binary } => {
+                self.config.lock().modify(|backend_config| {
+                    backend_config.memory = memory;
+                    backend_config.jvm_flags = jvm_flags;
+                    backend_config.jvm_binary = jvm_binary;
+                });
+            },
+            MessageToBackend::CleanupOldLogFiles { instance: id } => {
+                let mut deleted = 0;
+
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    let logs = instance.dot_minecraft_path.join("logs");
+
+                    if let Ok(read_dir) = std::fs::read_dir(logs) {
+                        for file in read_dir {
+                            let Ok(entry) = file else {
+                                continue;
+                            };
+
+                            let filename = entry.file_name();
+                            let Some(filename) = filename.to_str() else {
+                                continue;
+                            };
+
+                            if filename.ends_with(".log.gz") {
+                                if std::fs::remove_file(entry.path()).is_ok() {
+                                    deleted += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                self.send.send_success(format!("Deleted {} files", deleted));
+            },
+            MessageToBackend::UploadLogFile { path, modal_action } => {
+                let file = match std::fs::File::open(path) {
+                    Ok(file) => file,
+                    Err(e) => {
+                        let error = format!("Unable to read file: {e}");
+                        modal_action.set_finished_with_error(log_reader::replace(&error).into());
+                        return;
+                    },
+                };
+
+                let tracker = modal_action.push_tracker("Reading log file".into());
+                tracker.set_total(4);
+
+                let mut reader = std::io::BufReader::new(file);
+                let Ok(buffer) = reader.fill_buf() else {
+                    tracker.set_finished(ProgressTrackerFinishType::Error);
+                    return;
+                };
+
+                let mut content = String::new();
+
+                if buffer.len() >= 2 && buffer[0] == 0x1F && buffer[1] == 0x8B {
+                    let mut gz_decoder = flate2::bufread::GzDecoder::new(reader);
+                    if let Err(e) = gz_decoder.read_to_string(&mut content) {
+                        let error = format!("Error while reading file: {e}");
+                        modal_action.set_finished_with_error(log_reader::replace(&error).into());
+                        return;
+                    }
+                } else {
+                    if let Err(e) = reader.read_to_string(&mut content) {
+                        let error = format!("Error while reading file: {e}");
+                        modal_action.set_finished_with_error(log_reader::replace(&error).into());
+                        return;
+                    }
+                }
+
+                tracker.set_title("Redacting sensitive information".into());
+                tracker.set_count(1);
+
+                // Truncate to 11mb, mclo.gs limit as of right now is ~10.5mb
+                if content.len() > 11000000 {
+                    for i in 0..4 {
+                        if content.is_char_boundary(11000000 - i) {
+                            content.truncate(11000000 - i);
+                            break;
+                        }
+                    }
+                }
+
+                let replaced = log_reader::replace(&*content);
+
+                tracker.set_title("Uploading to mclo.gs".into());
+                tracker.set_count(2);
+
+                if replaced.trim_ascii().is_empty() {
+                    modal_action.set_finished_with_error("Log file was empty, didn't upload".into());
+                    return;
+                }
+
+                let result = self.http_client_provider.client().post("https://api.mclo.gs/1/log").form(&[("content", &*replaced)]).send().await;
+
+                let resp = match result {
+                    Ok(resp) => resp,
+                    Err(e) => {
+                        let error = format!("Error while uploading log: {e:?}");
+                        modal_action.set_finished_with_error(error.into());
+                        return;
+                    },
+                };
+
+                tracker.set_count(3);
+
+                let bytes = match resp.bytes().await {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        let error = format!("Error while reading mclo.gs response: {e:?}");
+                        modal_action.set_finished_with_error(error.into());
+                        return;
+                    },
+                };
+
+                #[derive(Deserialize)]
+                struct McLogsResponse {
+                    success: bool,
+                    url: Option<String>,
+                    error: Option<String>,
+                }
+
+                let response: McLogsResponse = match serde_json::from_slice(&bytes) {
+                    Ok(response) => response,
+                    Err(e) => {
+                        let error = format!("Error while deserializing mclo.gs response: {e:?}");
+                        modal_action.set_finished_with_error(error.into());
+                        return;
+                    },
+                };
+
+                if response.success {
+                    if let Some(url) = response.url {
+                        modal_action.set_visit_url(ModalActionVisitUrl {
+                            message: format!("Open {}", url).into(),
+                            url: url.into(),
+                            prevent_auto_finish: true,
+                        });
+                        modal_action.set_finished();
+                    } else {
+                        modal_action.set_finished_with_error("Success returned, but missing url".into());
+                    }
+                } else {
+                    if let Some(e) = response.error {
+                        let error = format!("mclo.gs rejected upload: {e}");
+                        modal_action.set_finished_with_error(error.into());
+                    } else {
+                        modal_action.set_finished_with_error("Failure returned, but missing error".into());
+                    }
+                }
+
+                tracker.set_count(4);
+                tracker.set_finished(ProgressTrackerFinishType::Normal);
+            },
+            MessageToBackend::AddNewAccount { modal_action } => {
+                self.login_flow(&modal_action, None).await;
+                modal_action.set_finished();
+            },
+            MessageToBackend::AddOfflineAccount { name, uuid } => {
+                let mut account_info = self.account_info.write();
+                account_info.modify(|account_info| {
+                    account_info.accounts.insert(uuid, BackendAccount {
+                        username: name,
+                        offline: true,
+                        head: None
+                    });
+                    account_info.selected_account = Some(uuid);
+                });
+            },
+            MessageToBackend::SelectAccount { uuid } => {
+                let mut account_info = self.account_info.write();
+
+                let info = account_info.get();
+                if info.selected_account == Some(uuid) || !info.accounts.contains_key(&uuid) {
+                    return;
+                }
+
+                account_info.modify(|account_info| {
+                    account_info.selected_account = Some(uuid);
+                });
+            },
+            MessageToBackend::DeleteAccount { uuid } => {
+                let mut account_info = self.account_info.write();
+
+                account_info.modify(|account_info| {
+                    account_info.accounts.shift_remove(&uuid);
+                    if account_info.selected_account == Some(uuid) {
+                        account_info.selected_account = None;
+                    }
+                });
+            },
+            MessageToBackend::ReorderAccounts { from_index, delta } => {
+                let mut account_info = self.account_info.write();
+                account_info.modify(|account_info| {
+                    let to_index = (from_index as isize + delta) as usize;
+
+                    if from_index >= account_info.accounts.len() || to_index >= account_info.accounts.len() || from_index == to_index {
+                        return;
+                    }
+
+                    account_info.accounts.move_index(from_index, to_index);
+                });
+            },
+            MessageToBackend::SetProxyConfiguration { config } => {
+                self.config.lock().modify(|backend_config| {
+                    backend_config.proxy = config;
+                });
+
+                self.update_http_clients().await;
+            },
+            MessageToBackend::SetProxyPassword { password } => {
+                match self.secret_storage.get_or_init(PlatformSecretStorage::new).await {
+                    Ok(storage) => {
+                        if password.is_empty() {
+                            if let Err(e) = storage.delete_proxy_password().await {
+                                log::warn!("Failed to delete proxy password from keyring: {:?}", e);
+                                return;
+                            }
+                        } else if let Err(e) = storage.write_proxy_password(&password).await {
+                            log::warn!("Failed to write proxy password to keyring: {:?}", e);
+                            self.send.send_error("Failed to save proxy password to system keyring");
+                            return;
+                        }
+                    },
+                    Err(e) => {
+                        log::warn!("Failed to initialize secret storage: {:?}", e);
+                        self.send.send_error("Failed to access system keyring for proxy password");
+                        return;
+                    }
+                }
+
+                self.update_http_clients().await;
+            },
+            MessageToBackend::CreateInstanceShortcut { id, path } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    let Ok(current_exe) = std::env::current_exe() else {
+                        return;
+                    };
+
+                    let args = &[
+                        "--run-instance",
+                        instance.name.as_str()
+                    ];
+                    crate::shortcut::create_shortcut(path, &format!("Launch {}", instance.name), &current_exe, args);
+                }
+            },
+            MessageToBackend::RelocateInstance { id, path } => {
+                if let Err(err) = std::fs::remove_dir(&path) && err.kind() != std::io::ErrorKind::NotFound {
+                    self.send.send_warning(format!("Cannot relocate instance: {err}"));
+                    return;
+                }
+
+                let mut is_normal_instance_folder = false;
+
+                if let Ok(path) = path.strip_prefix(&self.directories.instances_dir) && crate::fs::is_single_component_path(path) {
+                    is_normal_instance_folder = true;
+
+                    let instance_root = if let Some(instance) = self.instance_state.read().instances.get(id) {
+                        instance.root_path.clone()
+                    } else {
+                        return;
+                    };
+
+                    let is_real_folder = !instance_root.is_symlink(); // is_symlink also includes junction points
+
+                    if is_real_folder && let Some(name) = path.to_str() {
+                        self.rename_instance(id, name).await;
+                        return;
+                    }
+                };
+
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    if cfg!(windows) {
+                        self.file_watching.write().unwatch_subdirectories_of_instance(id);
+                        instance.mark_all_dirty(self, false);
+                    }
+
+                    #[cfg(windows)]
+                    if let Ok(target) = junction::get_target(&instance.root_path) {
+                        if let Err(err) = crate::fs::rename_with_fallback_across_devices(&target, &path) {
+                            log::error!("Unable to move instance files from {target:?} to {path:?}: {err:?}");
+                            self.send.send_error(format!("Unable to move instance files: {err}"));
+                            return;
+                        }
+
+                        _ = junction::delete(&instance.root_path);
+
+                        if !is_normal_instance_folder {
+                            if let Err(err) = junction::create(&path, &instance.root_path) {
+                                log::error!("Error while creating junction to moved instance: {err:?}");
+                                self.send.send_error(format!("Error while creating junction to moved instance: {err}"));
+                                return;
+                            }
+                        }
+                    };
+
+                    if let Ok(target) = std::fs::read_link(&instance.root_path) {
+                        if let Err(err) = crate::fs::rename_with_fallback_across_devices(&target, &path) {
+                            log::error!("Unable to move instance files from {target:?} to {path:?}: {err:?}");
+                            self.send.send_error(format!("Unable to move instance files: {err}"));
+                            return;
+                        }
+
+                        _ = std::fs::remove_file(&instance.root_path);
+
+                        if !is_normal_instance_folder {
+                            #[cfg(unix)]
+                            if let Err(err) = std::os::unix::fs::symlink(&path, &instance.root_path) {
+                                log::error!("Error while linking to moved instance: {err:?}");
+                                self.send.send_error(format!("Error while linking to moved instance: {err}"));
+                                return;
+                            }
+                            #[cfg(windows)]
+                            if let Err(err) = std::os::windows::fs::symlink_dir(&path, &instance.root_path) {
+                                log::error!("Error while linking to moved instance: {err:?}");
+                                self.send.send_error(format!("Error while linking to moved instance: {err}"));
+                                return;
+                            }
+                            #[cfg(not(any(unix, windows)))]
+                            compile_error!("Unsupported platform");
+                        }
+
+                        return;
+                    }
+
+                    if let Err(err) = crate::fs::rename_with_fallback_across_devices(&instance.root_path, &path) {
+                        log::error!("Unable to move instance files: {err:?}");
+                        self.send.send_error(format!("Unable to move instance files: {err}"));
+                        return;
+                    }
+
+                    if !is_normal_instance_folder {
+                        #[cfg(unix)]
+                        if let Err(err) = std::os::unix::fs::symlink(&path, &instance.root_path) {
+                            log::error!("Error while linking to moved instance: {err:?}");
+                            self.send.send_error(format!("Error while linking to moved instance: {err}"));
+                            return;
+                        }
+                        #[cfg(windows)]
+                        if let Err(err) = junction::create(&path, &instance.root_path) {
+                            log::error!("Error while creating junction to moved instance: {err:?}");
+                            self.send.send_error(format!("Error while creating junction to moved instance: {err}"));
+                            return;
+                        }
+                        #[cfg(not(any(unix, windows)))]
+                        compile_error!("Unsupported platform");
+                    }
+
+                }
+            },
+            MessageToBackend::InstallUpdate { update, modal_action } => {
+                tokio::task::spawn(crate::update::install_update(self.http_client_provider.redirecting(), self.directories.clone(), self.send.clone(), update, modal_action));
+            },
+            MessageToBackend::ImportFromOtherLauncher { launcher, import_job, modal_action } => {
+                crate::launcher_import::import_from_other_launcher(self, launcher, import_job, modal_action).await;
+            },
+            MessageToBackend::GetAccountSkin { account, result } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    let Some(account) = backend.get_minecraft_profile(account).await else {
+                        _ = result.send(AccountSkinResult::NeedsLogin);
+                        return;
+                    };
+
+                    if let Some(skin) = account.active_skin() {
+                        SkinManager::frontend_request(&backend, skin.url.clone(), skin.variant, result);
+                    } else {
+                        _ = result.send(AccountSkinResult::Success { skin: None, variant: SkinVariant::Classic });
+                    }
+                });
+            },
+            MessageToBackend::SetAccountSkin { account, skin, variant } => {
+                let Some((_, access_token)) = self.noninteractive_login_flow(account).await else {
+                    self.send.send_error("Unable to get access token");
+                    return;
+                };
+
+                let variant_str = match variant {
+                    SkinVariant::Slim => "slim",
+                    _ => "classic",
+                };
+
+                let form = reqwest::multipart::Form::new()
+                    .text("variant", variant_str)
+                    .part("file", reqwest::multipart::Part::bytes(skin.to_vec())
+                        .file_name("file.png")
+                        .mime_str("image/png").unwrap());
+
+                let response = self.http_client_provider.client()
+                    .post("https://api.minecraftservices.com/minecraft/profile/skins")
+                    .multipart(form)
+                    .bearer_auth(access_token.secret())
+                    .send()
+                    .await;
+
+                let response = match response {
+                    Ok(response) => response,
+                    Err(err) => {
+                        log::error!("Error while making skin change request: {:?}", err);
+                        self.send.send_error("Error while making skin change request");
+                        return;
+                    },
+                };
+
+                let status = response.status();
+                if status != reqwest::StatusCode::OK {
+                    #[derive(Deserialize)]
+                    struct MojangApiResponse {
+                        #[serde(rename = "errorMessage")]
+                        error_message: String
+                    }
+                    if let Ok(response) = response.json::<MojangApiResponse>().await {
+                        log::error!("Skin change failed: {}", &response.error_message);
+                        self.send.send_error(format!("Skin change failed: {}", &response.error_message));
+                    } else {
+                        log::error!("Skin change failed with non-200 status code: {}", status);
+                        self.send.send_error(format!("Skin change failed with non-200 status code: {}", status));
+                    }
+                    return;
+                } else if let Ok(profile) = response.json().await {
+                    self.cached_minecraft_profiles.write().insert(account, CachedMinecraftProfile::new(profile));
+                }
+            },
+            MessageToBackend::GetAccountCapes { account, result } => {
+                let backend = self.clone();
+                tokio::task::spawn(async move {
+                    let Some(account) = backend.get_minecraft_profile(account).await else {
+                        _ = result.send(AccountCapesResult::NeedsLogin);
+                        return;
+                    };
+
+                    _ = result.send(AccountCapesResult::Success {
+                        capes: account.capes
+                    });
+                });
+            },
+            MessageToBackend::SetAccountCape { account, cape } => {
+                let Some((_, access_token)) = self.noninteractive_login_flow(account).await else {
+                    self.send.send_error("Unable to get access token");
+                    return;
+                };
+
+                let request = if let Some(cape) = cape {
+                    #[derive(Serialize)]
+                    struct PutActiveCape {
+                        #[serde(rename = "capeId")]
+                        cape_id: Uuid
+                    }
+
+                    self.http_client_provider.client().put("https://api.minecraftservices.com/minecraft/profile/capes/active").json(&PutActiveCape {
+                        cape_id: cape
+                    })
+                } else {
+                    self.http_client_provider.client().delete("https://api.minecraftservices.com/minecraft/profile/capes/active")
+                };
+
+                let response = request
+                    .bearer_auth(access_token.secret())
+                    .send()
+                    .await;
+
+                let response = match response {
+                    Ok(response) => response,
+                    Err(err) => {
+                        log::error!("Error while making cape change request: {:?}", err);
+                        self.send.send_error("Error while making cape change request");
+                        return;
+                    },
+                };
+
+                let status = response.status();
+                if status != reqwest::StatusCode::OK {
+                    #[derive(Deserialize)]
+                    struct MojangApiResponse {
+                        #[serde(rename = "errorMessage")]
+                        error_message: String
+                    }
+                    if let Ok(response) = response.json::<MojangApiResponse>().await {
+                        log::error!("Cape change failed: {}", &response.error_message);
+                        self.send.send_error(format!("Cape change failed: {}", &response.error_message));
+                    } else {
+                        log::error!("Cape change failed with non-200 status code: {}", status);
+                        self.send.send_error(format!("Cape change failed with non-200 status code: {}", status));
+                    }
+                    return;
+                } else if let Ok(profile) = response.json().await {
+                    self.cached_minecraft_profiles.write().insert(account, CachedMinecraftProfile::new(profile));
+                }
+            },
+            MessageToBackend::RequestSkinLibrary => {
+                SkinManager::load_skin_library(&self);
+            },
+            MessageToBackend::RemoveFromSkinLibrary { skin } => {
+                SkinManager::remove_skin(&self, skin);
+            },
+            MessageToBackend::AddToSkinLibrary { source } => {
+                let (bytes, filename) = match source {
+                    bridge::message::UrlOrFile::Url { url } => {
+                        let url = match url::Url::parse(&*url) {
+                            Ok(url) => url,
+                            Err(err) => {
+                                log::error!("Invalid URL: {}", err);
+                                self.send.send_error(format!("Invalid URL: {}", err));
+                                return;
+                            },
+                        };
+
+                        let filename = url.path_segments()
+                            .and_then(|s| s.last())
+                            .unwrap_or("skin.png")
+                            .to_owned();
+
+                        let response = self.http_client_provider.redirecting().get(url).send().await;
+
+                        let response = match response {
+                            Ok(response) => response,
+                            Err(err) => {
+                                log::error!("Error while requesting skin: {:?}", err);
+                                self.send.send_error("Error while requesting skin, see logs for more details");
+                                return;
+                            },
+                        };
+
+                        let bytes = match response.bytes().await {
+                            Ok(bytes) => bytes.to_vec(),
+                            Err(err) => {
+                                log::error!("Error while downloading skin: {:?}", err);
+                                self.send.send_error("Error while downloading skin, see logs for more details");
+                                return;
+                            },
+                        };
+
+                        (bytes, filename)
+                    },
+                    bridge::message::UrlOrFile::File { path } => {
+                        let bytes = match std::fs::read(&path) {
+                            Ok(bytes) => bytes,
+                            Err(err) => {
+                                log::error!("Error while reading skin file: {:?}", err);
+                                self.send.send_error("Error while reading skin file, see logs for more details");
+                                return;
+                            },
+                        };
+
+                        let filename = path.file_name()
+                            .map(|s| s.to_string_lossy())
+                            .unwrap_or(Cow::Borrowed("skin.png"))
+                            .into_owned();
+
+                        (bytes, filename)
+                    },
+                };
+
+                let image = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png);
+                let image = match image {
+                    Ok(image) => image,
+                    Err(err) => {
+                        if let image::ImageError::Decoding(_) = err {
+                            self.send.send_error("Skin is not a valid PNG image");
+                        } else {
+                            log::error!("An error occurred while loading the image: {:?}", err);
+                            self.send.send_error("An error occurred while loading the image, see logs for more details");
+                        }
+                        return;
+                    },
+                };
+                if !SkinManager::is_valid_size(&image) {
+                    self.send.send_error("Invalid skin file. Must be 64x64 or 64x32.");
+                    return;
+                }
+
+                let filename = sanitize_filename::sanitize_with_options(filename, sanitize_filename::Options { windows: true, ..Default::default() });
+                let filename = crate::fs::unique_name(&self.directories.skin_library_dir, &filename, false);
+                let path = self.directories.skin_library_dir.join(&*filename);
+
+                if let Err(err) = crate::fs::write_safe(&path, &bytes) {
+                    log::error!("Error while saving skin: {:?}", err);
+                    self.send.send_error("Error while saving skin, see logs for more details");
+                }
+            },
+            MessageToBackend::CopyPlayerSkin { username } => {
+                let preview = match self.fetch_player_skin(&username).await {
+                    Ok(preview) => preview,
+                    Err(err) => {
+                        self.send.send_error(err);
+                        return;
+                    },
+                };
+                let filename = format!("{}.png", preview.name);
+                let filename = sanitize_filename::sanitize_with_options(filename, sanitize_filename::Options { windows: true, ..Default::default() });
+                let filename = crate::fs::unique_name(&self.directories.skin_library_dir, &filename, false);
+                let path = self.directories.skin_library_dir.join(&*filename);
+
+                if let Err(err) = crate::fs::write_safe(&path, &preview.skin) {
+                    log::error!("CopyPlayerSkin: failed to save skin: {:?}", err);
+                    self.send.send_error("Error while saving skin, see logs for more details");
+                }
+            },
+            MessageToBackend::PreviewPlayerSkin { username, result } => {
+                let this = self.clone();
+                tokio::spawn(async move {
+                    _ = result.send(this.fetch_player_skin(&username).await);
+                });
+            },
+            MessageToBackend::FetchUrl { url, result } => {
+                let client = self.http_client_provider.redirecting();
+                tokio::spawn(async move {
+                    let fetched = async {
+                        let response = client.get(&*url).send().await.map_err(|e| Arc::<str>::from(format!("Couldn't reach {url}: {e}")))?;
+                        if !response.status().is_success() {
+                            return Err(Arc::<str>::from(format!("{url} returned {}", response.status())));
+                        }
+                        response.bytes().await.map(|b| b.to_vec()).map_err(|e| Arc::<str>::from(format!("Download failed: {e}")))
+                    }.await;
+                    _ = result.send(fetched);
+                });
+            },
+            MessageToBackend::SgdbOptions { name, steam_appid, key, kind, page, result } => {
+                let client = self.http_client_provider.redirecting();
+                tokio::spawn(async move {
+                    _ = result.send(crate::web_art::sgdb_options(&client, &key, &name, steam_appid, kind, page).await);
+                });
+            },
+            MessageToBackend::XboxLiveToken { result } => {
+                let this = self.clone();
+                tokio::spawn(async move {
+                    _ = result.send(this.xbox_live_token().await);
+                });
+            },
+            MessageToBackend::FindGameInfo { name, platform, steam_appid, result } => {
+                let this = self.clone();
+                tokio::spawn(async move {
+                    _ = result.send(this.find_game_info(&name, platform.as_deref(), steam_appid).await);
+                });
+            },
+            MessageToBackend::FindGameArt { name, system, platform, steam_appid, sgdb_key, dest, result } => {
+                let this = self.clone();
+                tokio::spawn(async move {
+                    _ = result.send(this.find_game_art(&name, system.as_deref(), platform.as_deref(), steam_appid, sgdb_key.as_deref(), &dest).await);
+                });
+            },
+            MessageToBackend::Login { account, modal_action } => {
+                self.login_flow(&modal_action, Some(account)).await;
+                modal_action.set_finished();
+            },
+            MessageToBackend::Quit => {
+                self.should_quit.store(true, Ordering::Relaxed);
+            },
+            MessageToBackend::MoveInstanceToGroup { instance_id, group } => {
+                if let Some(instance) = self.instance_state.write().instances.get_mut(instance_id) {
+                    let group = if group.trim_ascii().is_empty() {
+                        None
+                    } else {
+                        Some(group)
+                    };
+                    instance.configuration.modify(|cfg| cfg.group = group);
+                    self.send.send(instance.create_modify_message());
+                }
+            }
+        }
+    }
+
+    async fn start_instance(
+        self: &Arc<Self>,
+        id: InstanceID,
+        quick_play: Option<QuickPlayLaunch>,
+        live_game_output: Option<tokio::sync::oneshot::Sender<tokio::sync::mpsc::UnboundedReceiver<GameOutputMsg>>>,
+        modal_action: ModalAction
+    ) {
+        let keepalive = KeepAlive::new();
+
+        let (dot_minecraft, mut configuration) = if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+            if let Some(launch_keepalive) = &instance.launch_keepalive && launch_keepalive.is_alive() {
+                modal_action.set_finished_with_error("Can't launch instance, already launching".into());
+                return;
+            }
+
+            instance.launch_keepalive = Some(keepalive.create_handle());
+
+            self.send.send(MessageToFrontend::MoveInstanceToTop {
+                id
+            });
+            self.send.send(instance.create_modify_message());
+
+            (instance.dot_minecraft_path.clone(), instance.configuration.get().clone())
+        } else {
+            self.send.send_error("Can't launch instance, unknown id");
+            modal_action.set_finished_with_error("Can't launch instance, unknown id".into());
+            return;
+        };
+
+        crate::launch::apply_global_launch_defaults(&mut configuration, self.config.lock().get());
+
+        scopeguard::defer! {
+            modal_action.set_finished();
+            drop(keepalive);
+            if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                if let Some(launch_keepalive) = &instance.launch_keepalive && !launch_keepalive.is_alive() {
+                    instance.launch_keepalive = None;
+                }
+                self.restore_mods_folder_if_stopped(instance);
+                self.send.send(instance.create_modify_message());
+            }
+        }
+
+        let Some(login_info) = self.get_login_info(&modal_action, configuration.preferred_account).await else {
+            modal_action.set_finished_with_error("Unable to log in to Minecraft account".into());
+            return;
+        };
+
+        if modal_action.get_finished_at().is_some() || modal_action.has_requested_cancel() {
+            return;
+        }
+        modal_action.clear_trackers();
+
+        tokio::select! {
+            _ = self.prelaunch(id, &modal_action) => {},
+            _ = modal_action.request_cancel.cancelled() => {
+                return;
+            }
+        };
+
+        if modal_action.get_finished_at().is_some() || modal_action.has_requested_cancel() {
+            return;
+        }
+        modal_action.clear_trackers();
+
+        let launch_tracker = modal_action.push_tracker("Launching".into());
+        let result = self.launcher.launch(&self.http_client_provider.redirecting(), dot_minecraft, configuration, quick_play, login_info, live_game_output.is_some(), &launch_tracker, &modal_action).await;
+
+        if matches!(result, Err(LaunchError::CancelledByUser)) {
+            return;
+        }
+
+        let is_err = result.is_err();
+        match result {
+            Ok(mut child) => {
+                if let Some(live_game_output) = live_game_output {
+                    if let Some(stdout) = child.stdout.take() {
+                        let receiver = log_reader::start_game_output(stdout, child.stderr.take());
+                        _ = live_game_output.send(receiver);
+                    }
+                }
+
+                // Close handles if unused
+                child.stderr.take();
+                child.stdin.take();
+                child.stdout.take();
+
+                if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
+                    instance.processes.push(child.process);
+                    instance.update_session();
+                    self.quit_coordinator.set_can_quit(false);
+                }
+            },
+            Err(ref err) => {
+                log::error!("Failed to launch due to error: {:?}", &err);
+                modal_action.set_finished_with_error(format!("{}", &err).into());
+            },
+        }
+
+        launch_tracker.set_finished(ProgressTrackerFinishType::from_err(is_err));
+    }
+
+    async fn setup_quickplay_instance(self: &Arc<Self>, preset: QuickplayPreset, minecraft_version: Ustr, modal_action: &ModalAction) -> Option<InstanceID> {
+        let loader = crate::quickplay_presets::loader(preset);
+
+        let name = schema::quickplay::INSTANCE_NAME;
+        let (id, mods_folder) = if let Some(existing) = self.instance_state.write().instances.iter_mut().find(|i| i.name == name) {
+            existing.configuration.modify(|cfg| {
+                cfg.minecraft_version = minecraft_version;
+                cfg.loader = loader;
+                cfg.sandbox = true;
+            });
+            let mods_folder = if existing.frozen_mods_folder {
+                None
+            } else {
+                Some(existing.content_state[ContentFolder::Mods].path.clone())
+            };
+            (existing.id, mods_folder)
+        } else {
+            let tracker = modal_action.push_tracker("Creating instance".into());
+            tracker.add_total(2);
+
+            let path = self.create_instance(name, minecraft_version.as_str(), loader, None)?;
+
+            tracker.add_count(1);
+
+            let instance_id = self.load_instance_from_path(&path, true, false)?;
+
+            let mods_folder = if let Some(instance) = self.instance_state.write().instances.get_mut(instance_id) {
+                instance.configuration.modify(|cfg| {
+                    cfg.minecraft_version = minecraft_version;
+                    cfg.loader = loader;
+                    cfg.sandbox = true;
+                });
+                if instance.frozen_mods_folder {
+                    None
+                } else {
+                    Some(instance.content_state[ContentFolder::Mods].path.clone())
+                }
+            } else {
+                None
+            };
+
+            tracker.add_count(1);
+            tracker.set_finished(ProgressTrackerFinishType::Normal);
+
+            (instance_id, mods_folder)
+        };
+
+        if loader == Loader::Vanilla {
+            return Some(id);
+        }
+        let Some(mods_folder) = mods_folder else {
+            return Some(id);
+        };
+
+        let files = crate::quickplay_presets::resolve_installs(preset, minecraft_version, self.meta.clone(), modal_action).await;
+
+        _ = std::fs::remove_dir_all(mods_folder);
+        let install = ContentInstall {
+            target: InstallTarget::Instance(id),
+            loader,
+            minecraft_version,
+            files,
+        };
+
+        self.install_content(install, modal_action.clone()).await;
+
+        Some(id)
+    }
+
+    fn extract_skin_url_from_profile(profile_json: &str) -> Option<Arc<str>> {
+        use base64::Engine;
+        let parsed: serde_json::Value = serde_json::from_str(profile_json).ok()?;
+        for prop in parsed["properties"].as_array()? {
+            if prop["name"].as_str() == Some("textures") {
+                let encoded = prop["value"].as_str()?;
+                let decoded = base64::engine::general_purpose::STANDARD.decode(encoded).ok()?;
+                let textures: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+                let url = textures["textures"]["SKIN"]["url"].as_str()?;
+                return Some(url.into());
+            }
+        }
+        None
+    }
+
+    pub async fn get_minecraft_profile(&self, account: Uuid) -> Option<MinecraftProfileResponse> {
+        if let Some(cached_profile) = self.cached_minecraft_profiles.read().get(&account) {
+            if cached_profile.is_valid(Instant::now()) {
+                return Some(cached_profile.profile.clone());
+            }
+        }
+
+        let try_permit = self.login_semaphore.try_acquire();
+        let mut _await_permit = None;
+        if matches!(try_permit, Err(TryAcquireError::NoPermits)) {
+            _await_permit = Some(self.login_semaphore.acquire().await);
+
+            if let Some(cached_profile) = self.cached_minecraft_profiles.read().get(&account) {
+                if cached_profile.is_valid(Instant::now()) {
+                    return Some(cached_profile.profile.clone());
+                }
+            }
+        }
+
+        let secret_storage = self.get_secret_storage(None).await?;
+        let credentials = secret_storage.read_credentials(account).await.ok().flatten().unwrap_or_default();
+
+        Some(self.noninteractive_login_flow_inner(account, credentials).await?.0)
+    }
+
+    pub async fn noninteractive_login_flow(&self, account: Uuid) -> Option<(MinecraftProfileResponse, MinecraftAccessToken)> {
+        let _permit = self.login_semaphore.acquire().await;
+
+        let secret_storage = self.get_secret_storage(None).await?;
+        let credentials = secret_storage.read_credentials(account).await.ok().flatten().unwrap_or_default();
+
+        if let Some(access_token) = credentials.access_token()
+            && let Some(cached_profile) = self.cached_minecraft_profiles.read().get(&account)
+            && cached_profile.is_valid(Instant::now())
+        {
+            return Some((cached_profile.profile.clone(), access_token));
+        }
+
+        self.noninteractive_login_flow_inner(account, credentials).await
+    }
+
+    pub async fn noninteractive_login_flow_inner(&self, account: Uuid, mut credentials: AccountCredentials) -> Option<(MinecraftProfileResponse, MinecraftAccessToken)> {
+        log::info!("Doing non-interactive login flow for {account}");
+        let login_result = self.login(&mut credentials, None, None).await;
+
+        if let Err(LoginError::NeedsUserInteraction) | Err(LoginError::CancelledByUser) = login_result {
+            return None;
+        }
+
+        let secret_storage = self.get_secret_storage(None).await?;
+
+        let (profile, access_token) = match login_result {
+            Ok(login_result) => login_result,
+            Err(ref err) => {
+                log::error!("Error logging in: {err}");
+                let _ = secret_storage.delete_credentials(account).await;
+                return None;
+            },
+        };
+
+        self.cached_minecraft_profiles.write().insert(profile.id, CachedMinecraftProfile::new(profile.clone()));
+
+        if profile.id != account {
+            let _ = secret_storage.delete_credentials(account).await;
+        }
+
+        self.update_account_info_with_profile(&profile, false);
+
+        if let Err(error) = secret_storage.write_credentials(profile.id, &credentials).await {
+            log::warn!("Unable to write credentials to keychain: {error}");
+        }
+
+        Some((profile, access_token))
+    }
+
+    /// An Xbox Live pass from the selected Microsoft account's saved sign-in (refreshed as needed).
+    pub async fn xbox_live_token(&self) -> Result<bridge::message::XboxLiveToken, Arc<str>> {
+        use auth::{authenticator::Authenticator, models::TokenWithExpiry};
+        let account = {
+            let mut info = self.account_info.write();
+            let info = info.get();
+            info.selected_account.filter(|uuid| info.accounts.get(uuid).is_some_and(|a| !a.offline))
+        };
+        let account = account.ok_or_else(|| Arc::<str>::from("Sign in with your Microsoft account first (your name at the top of the sidebar)"))?;
+        let storage = self.get_secret_storage(None).await.ok_or_else(|| Arc::<str>::from("Couldn't open Flux's saved sign-ins"))?;
+        let mut credentials = storage.read_credentials(account).await.ok().flatten()
+            .ok_or_else(|| Arc::<str>::from("Your Microsoft sign-in has expired: sign in again from the sidebar"))?;
+        let mut authenticator = Authenticator::new(self.http_client_provider.client());
+        let now = chrono::Utc::now();
+        let expired = || Arc::<str>::from("Your Microsoft sign-in has expired: sign in again from the sidebar");
+
+        let xbl = match credentials.xbl.as_ref().filter(|t| now < t.expiry) {
+            Some(t) => t.token.clone(),
+            None => {
+                let access = match credentials.msa_access.as_ref().filter(|t| now < t.expiry) {
+                    Some(t) => t.token.clone(),
+                    None => {
+                        let refresh = credentials.msa_refresh.clone().ok_or_else(expired)?;
+                        let tokens = authenticator.refresh_msa(&refresh, &credentials.msa_refresh_force_client_id).await
+                            .map_err(|e| Arc::<str>::from(format!("Couldn't refresh your Microsoft sign-in: {e}")))?
+                            .ok_or_else(expired)?;
+                        let token = tokens.access.token.clone();
+                        credentials.msa_access = Some(tokens.access);
+                        if tokens.refresh.is_some() {
+                            credentials.msa_refresh = tokens.refresh;
+                        }
+                        token
+                    },
+                };
+                let xbl = authenticator.authenticate_xbox(&access).await
+                    .map_err(|e| Arc::<str>::from(format!("Xbox Live sign-in failed: {e:?}")))?;
+                let token = xbl.token.clone();
+                credentials.xbl = Some(TokenWithExpiry { token: xbl.token, expiry: xbl.expiry });
+                token
+            },
+        };
+        _ = storage.write_credentials(account, &credentials).await;
+
+        let (token, claims) = authenticator.obtain_xbox_live_xsts(&xbl).await.map_err(|e| Arc::<str>::from(match e {
+            auth::authenticator::XboxAuthenticateError::NonOkHttpStatus(status) if status.as_u16() == 401 || status.as_u16() == 403 =>
+                "Xbox Live didn't allow Flux to use Xbox friends and messages with this sign-in (it may need Flux's own Microsoft app, waiting on approval)".to_string(),
+            e => format!("Xbox Live sign-in failed: {e:?}"),
+        }))?;
+        let uhs = claims.get("uhs").cloned().unwrap_or_default();
+        Ok(bridge::message::XboxLiveToken {
+            authorization: format!("XBL3.0 x={uhs};{token}").into(),
+            xuid: claims.get("xid").cloned().unwrap_or_default().into(),
+            gamertag: claims.get("gtg").cloned().unwrap_or_default().into(),
+        })
+    }
+
+    pub async fn get_secret_storage(&self, modal_action: Option<&ModalAction>) -> Option<&PlatformSecretStorage> {
+        match self.secret_storage.get_or_init(PlatformSecretStorage::new).await {
+            Ok(secret_storage) => Some(secret_storage),
+            Err(error) => {
+                log::error!("Error initializing secret storage: {error}");
+                if let Some(modal_action) = modal_action {
+                    modal_action.set_finished_with_error(format!("Error initializing secret storage: {error}").into());
+                }
+                return None;
+            }
+        }
+    }
+
+    pub async fn login_flow(&self, modal_action: &ModalAction, selected_account: Option<Uuid>) -> Option<(MinecraftProfileResponse, MinecraftAccessToken)> {
+        let _permit = self.login_semaphore.acquire().await;
+
+        let mut credentials = if let Some(selected_account) = selected_account {
+            let secret_storage = self.get_secret_storage(Some(modal_action)).await?;
+
+            match secret_storage.read_credentials(selected_account).await {
+                Ok(credentials) => credentials.unwrap_or_default(),
+                Err(error) => {
+                    log::warn!("Unable to read credentials from keychain: {error}");
+                    self.send.send_warning(
+                        "Unable to read credentials from keychain. You will need to log in again",
+                    );
+                    AccountCredentials::default()
+                },
+            }
+        } else {
+            AccountCredentials::default()
+        };
+
+        if let Some(selected_account) = selected_account
+            && let Some(access_token) = credentials.access_token()
+            && let Some(cached_profile) = self.cached_minecraft_profiles.read().get(&selected_account)
+        {
+            let now = Instant::now();
+            if now >= cached_profile.not_before && now < cached_profile.not_after {
+                return Some((cached_profile.profile.clone(), access_token));
+            }
+        }
+
+        let login_tracker = modal_action.push_tracker("Logging in".into());
+
+        let login_result = self.login(&mut credentials, Some(&login_tracker), Some(&modal_action)).await;
+
+        if matches!(login_result, Err(LoginError::CancelledByUser)) {
+            modal_action.set_finished();
+            return None;
+        }
+
+        let secret_storage = self.get_secret_storage(Some(modal_action)).await?;
+
+        let (profile, access_token) = match login_result {
+            Ok(login_result) => {
+                login_tracker.set_finished(ProgressTrackerFinishType::Normal);
+                login_result
+            },
+            Err(ref err) => {
+                log::error!("Error logging in: {err}");
+
+                if let Some(selected_account) = selected_account {
+                    let _ = secret_storage.delete_credentials(selected_account).await;
+                }
+
+                login_tracker.set_finished(ProgressTrackerFinishType::Error);
+                modal_action.set_finished_with_error(format!("Error logging in: {}", &err).into());
+                return None;
+            },
+        };
+
+        self.cached_minecraft_profiles.write().insert(profile.id, CachedMinecraftProfile::new(profile.clone()));
+
+        if let Some(selected_account) = selected_account
+            && profile.id != selected_account
+        {
+            let _ = secret_storage.delete_credentials(selected_account).await;
+        }
+
+        self.update_account_info_with_profile(&profile, true);
+
+        if let Err(error) = secret_storage.write_credentials(profile.id, &credentials).await {
+            log::warn!("Unable to write credentials to keychain: {error}");
+            self.send.send_warning("Unable to write credentials to keychain. You might need to fully log in again next time");
+        }
+
+        Some((profile, access_token))
+    }
+
+    pub fn update_account_info_with_profile(&self, profile: &MinecraftProfileResponse, select: bool) {
+        let mut account_info = self.account_info.write();
+
+        let info = account_info.get();
+        if info.accounts.contains_key(&profile.id) && (!select || info.selected_account == Some(profile.id)) {
+            drop(account_info);
+            if let Some(skin) = profile.active_skin().cloned() {
+                SkinManager::update_account(self, profile.id, skin.url);
+            }
+            return;
+        }
+
+        account_info.modify(|info| {
+            if !info.accounts.contains_key(&profile.id) {
+                let account = BackendAccount::new_from_profile(profile);
+                info.accounts.insert(profile.id, account);
+            }
+
+            if select {
+                info.selected_account = Some(profile.id);
+            }
+        });
+
+        drop(account_info);
+        if let Some(skin) = profile.active_skin().cloned() {
+            SkinManager::update_account(self, profile.id, skin.url);
+        }
+    }
+
+    pub async fn download_all_metadata(&self) {
+        let Ok(versions) = self.meta.fetch(MinecraftVersionManifestMetadataItem).await else {
+            panic!("Unable to get Minecraft version manifest");
+        };
+
+        for link in &versions.versions {
+            let Ok(version_info) = self.meta.fetch(MinecraftVersionMetadataItem(link)).await else {
+                panic!("Unable to get load version: {:?}", link.id);
+            };
+
+            let asset_index = format!("{}", version_info.assets);
+
+            let Ok(_) = self.meta.fetch(AssetsIndexMetadataItem {
+                url: version_info.asset_index.url,
+                cache: self.directories.assets_index_dir.join(format!("{}.json", &asset_index)).into(),
+                hash: version_info.asset_index.sha1,
+            }).await else {
+                panic!("Can't get assets index {:?}", version_info.asset_index.url);
+            };
+
+            if let Some(arguments) = &version_info.arguments {
+                for argument in arguments.game.iter() {
+                    let value = match argument {
+                        LaunchArgument::Single(launch_argument_value) => launch_argument_value,
+                        LaunchArgument::Ruled(launch_argument_ruled) => &launch_argument_ruled.value,
+                    };
+                    match value {
+                        LaunchArgumentValue::Single(shared_string) => {
+                            check_argument_expansions(shared_string.as_str());
+                        },
+                        LaunchArgumentValue::Multiple(shared_strings) => {
+                            for shared_string in shared_strings.iter() {
+                                check_argument_expansions(shared_string.as_str());
+                            }
+                        },
+                    }
+                }
+            } else if let Some(legacy_arguments) = &version_info.minecraft_arguments {
+                for argument in legacy_arguments.split_ascii_whitespace() {
+                    check_argument_expansions(argument);
+                }
+            }
+        }
+
+        let Ok(runtimes) = self.meta.fetch(MojangJavaRuntimesMetadataItem).await else {
+            panic!("Unable to get java runtimes manifest");
+        };
+
+        for (platform_name, platform) in &runtimes.platforms {
+            for (jre_component, components) in &platform.components {
+                if components.is_empty() {
+                    continue;
+                }
+
+                let runtime_component_dir = self.directories.runtime_base_dir.join(jre_component).join(platform_name.as_str());
+                let _ = std::fs::create_dir_all(&runtime_component_dir);
+                let Ok(runtime_component_dir) = runtime_component_dir.canonicalize() else {
+                    panic!("Unable to create runtime component dir");
+                };
+
+                for runtime_component in components {
+                    let Ok(manifest) = self.meta.fetch(MojangJavaRuntimeComponentMetadataItem {
+                        url: runtime_component.manifest.url,
+                        cache: runtime_component_dir.join("manifest.json").into(),
+                        hash: runtime_component.manifest.sha1,
+                    }).await else {
+                        panic!("Unable to get java runtime component manifest");
+                    };
+
+                    let keys: &[Arc<std::path::Path>] = &[
+                        std::path::Path::new("bin/java").into(),
+                        std::path::Path::new("bin/javaw.exe").into(),
+                        std::path::Path::new("jre.bundle/Contents/Home/bin/java").into(),
+                        std::path::Path::new("MinecraftJava.exe").into(),
+                    ];
+
+                    let mut known_executable_path = false;
+                    for key in keys {
+                        if manifest.files.contains_key(key) {
+                            known_executable_path = true;
+                            break;
+                        }
+                    }
+
+                    if !known_executable_path {
+                        panic!("{}/{} doesn't contain known java executable", jre_component, platform_name);
+                    }
+                }
+            }
+        }
+
+        println!("Done downloading all metadata");
+    }
+}
+
+fn check_argument_expansions(argument: &str) {
+    let mut dollar_last = false;
+    for (i, character) in argument.char_indices() {
+        if character == '$' {
+            dollar_last = true;
+        } else if dollar_last && character == '{' {
+            let remaining = &argument[i..];
+            if let Some(end) = remaining.find('}') {
+                let to_expand = &argument[i+1..i+end];
+                if ArgumentExpansionKey::from_str(to_expand).is_none() {
+                    panic!("Unsupported argument: {:?}", to_expand);
+                }
+            }
+        } else {
+            dollar_last = false;
+        }
+    }
+}
+
+async fn send_log_line(line: &[u8], send: &tokio::sync::mpsc::Sender<Arc<str>>, factory: &mut ArcStrFactory) -> Result<(), tokio::sync::mpsc::error::SendError<Arc<str>>> {
+    match str::from_utf8(&*line) {
+        Ok(utf8) => {
+            let replaced = log_reader::replace(utf8.trim_ascii_end());
+            send.send(factory.create(&replaced)).await?;
+        },
+        Err(e) => {
+            let error = format!("Invalid UTF8: {e}");
+            for line in error.split('\n') {
+                let replaced = log_reader::replace(line.trim_ascii_end());
+                send.send(factory.create(&replaced)).await?;
+            }
+        },
+    }
+    Ok(())
+}

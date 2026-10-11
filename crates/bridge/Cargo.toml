@@ -1,0 +1,21 @@
+[package]
+name = "bridge"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+atomic-time.workspace = true
+atomic_enum.workspace = true
+schema.workspace = true
+ustr.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+tokio-util.workspace = true
+enum-map.workspace = true
+strum.workspace = true
+relative-path.workspace = true
+sanitize-filename.workspace = true
+indexmap.workspace = true
+parking_lot.workspace = true
+once_cell.workspace = true
+directories.workspace = true

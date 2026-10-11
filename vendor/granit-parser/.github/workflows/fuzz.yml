@@ -1,0 +1,49 @@
+name: Fuzz
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  schedule:
+    - cron: "30 3 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: Build and smoke-run fuzz targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      CARGO_TERM_COLOR: always
+      FUZZ_SECONDS: 1200
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install nightly Rust
+        run: rustup toolchain install nightly --profile minimal --no-self-update
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-fuzz
+        run: cargo +nightly install cargo-fuzz
+
+      - name: Build fuzz targets
+        run: cargo +nightly fuzz build
+
+      - name: Smoke-run fuzz targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in aliases_merges duplicate_keys flow_collections large_scalars; do
+            cargo +nightly fuzz run "${target}" -- -max_total_time="${FUZZ_SECONDS}" -timeout=10 -rss_limit_mb=4096
+          done

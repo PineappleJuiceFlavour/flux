@@ -1,0 +1,346 @@
+use std::{path::Path, sync::Arc};
+
+use bridge::{
+    handle::BackendHandle, instance::{ContentFolder, InstanceContentSummary, InstanceID, InstancePlaytime, InstanceServerSummary, InstanceStatus, InstanceWorldSummary}, message::{BridgeDataLoadState, MessageToBackend}, serial::AtomicOptionSerial
+};
+use gpui::{prelude::*, *};
+use gpui_component::select::SelectItem;
+use indexmap::IndexMap;
+use schema::{instance::InstanceConfiguration, unique_bytes::UniqueBytes};
+
+pub struct InstanceEntries {
+    pub entries: IndexMap<InstanceID, Entity<InstanceEntry>>,
+}
+
+impl InstanceEntries {
+    pub fn add(
+        entity: &Entity<Self>,
+        id: InstanceID,
+        name: SharedString,
+        icon: Option<UniqueBytes>,
+        root_path: Arc<Path>,
+        dot_minecraft_folder: Arc<Path>,
+        configuration: InstanceConfiguration,
+        playtime: InstancePlaytime,
+        worlds_state: BridgeDataLoadState,
+        servers_state: BridgeDataLoadState,
+        content_states: ContentStates,
+        cx: &mut App,
+    ) {
+        entity.update(cx, |entries, cx| {
+            let mut instance = InstanceEntry {
+                id,
+                name,
+                icon,
+                title: "".into(),
+                root_path,
+                dot_minecraft_folder,
+                configuration,
+                playtime,
+                status: InstanceStatus::NotRunning,
+                worlds_state,
+                worlds: cx.new(|_| None),
+                servers_state,
+                servers: cx.new(|_| None),
+                content_states,
+                content: enum_map::EnumMap::from_fn(|_| cx.new(|_| None)),
+                live_game_output: None,
+            };
+            instance.title = instance.create_title();
+
+            entries.entries.insert_before(0, id, cx.new(|_| instance.clone()));
+            cx.emit(InstanceAddedEvent { instance });
+        });
+    }
+
+    pub fn find_title_by_name(entity: &Entity<Self>, name: &SharedString, cx: &App) -> Option<SharedString> {
+        for (_, entry) in &entity.read(cx).entries {
+            let entry = entry.read(cx);
+            if &entry.name == name {
+                return Some(entry.title());
+            }
+        }
+        None
+    }
+
+    pub fn find_id_by_name(entity: &Entity<Self>, name: &SharedString, cx: &App) -> Option<InstanceID> {
+        for (id, entry) in &entity.read(cx).entries {
+            if &entry.read(cx).name == name {
+                return Some(*id);
+            }
+        }
+        None
+    }
+
+    pub fn find_name_by_id(entity: &Entity<Self>, id: InstanceID, cx: &App) -> Option<SharedString> {
+        if let Some(entry) = entity.read(cx).entries.get(&id) {
+            return Some(entry.read(cx).name.clone())
+        }
+        None
+    }
+
+    pub fn remove(entity: &Entity<Self>, id: InstanceID, cx: &mut App) {
+        entity.update(cx, |entries, cx| {
+            if let Some(_) = entries.entries.shift_remove(&id) {
+                cx.emit(InstanceRemovedEvent { id });
+            }
+        });
+    }
+
+    pub fn modify(
+        entity: &Entity<Self>,
+        id: InstanceID,
+        name: SharedString,
+        icon: Option<UniqueBytes>,
+        root_path: Arc<Path>,
+        dot_minecraft_folder: Arc<Path>,
+        configuration: InstanceConfiguration,
+        playtime: InstancePlaytime,
+        status: InstanceStatus,
+        cx: &mut App,
+    ) {
+        entity.update(cx, |entries, cx| {
+            if let Some(instance) = entries.entries.get_mut(&id) {
+                let cloned = instance.update(cx, |instance, cx| {
+                    instance.name = name.clone();
+                    instance.icon = icon.clone();
+                    instance.root_path = root_path.clone();
+                    instance.dot_minecraft_folder = dot_minecraft_folder.clone();
+                    instance.configuration = configuration.clone();
+                    instance.playtime = playtime;
+                    instance.status = status;
+                    instance.title = instance.create_title();
+                    cx.notify();
+
+                    instance.clone()
+                });
+
+                cx.emit(InstanceModifiedEvent { instance: cloned });
+            }
+        });
+    }
+
+    pub fn set_worlds(
+        entity: &Entity<Self>,
+        id: InstanceID,
+        worlds: Arc<[InstanceWorldSummary]>,
+        cx: &mut App,
+    ) {
+        entity.update(cx, |entries, cx| {
+            if let Some(instance) = entries.entries.get_mut(&id) {
+                instance.update(cx, |instance, cx| {
+                    instance.worlds.update(cx, |existing_worlds, cx| {
+                        *existing_worlds = Some(worlds);
+                        cx.notify();
+                    })
+                });
+            }
+        });
+    }
+
+    pub fn set_servers(
+        entity: &Entity<Self>,
+        id: InstanceID,
+        servers: Arc<[InstanceServerSummary]>,
+        cx: &mut App,
+    ) {
+        entity.update(cx, |entries, cx| {
+            if let Some(instance) = entries.entries.get_mut(&id) {
+                instance.update(cx, |instance, cx| {
+                    instance.servers.update(cx, |existing_servers, cx| {
+                        *existing_servers = Some(servers);
+                        cx.notify();
+                    })
+                });
+            }
+        });
+    }
+
+    pub fn set_content(entity: &Entity<Self>, id: InstanceID, content_folder: ContentFolder, content: Arc<[InstanceContentSummary]>, cx: &mut App) {
+        entity.update(cx, |entries, cx| {
+            if let Some(instance) = entries.entries.get_mut(&id) {
+                instance.update(cx, |instance, cx| {
+                    instance.content[content_folder].update(cx, |existing_content, cx| {
+                        *existing_content = Some(content);
+                        cx.notify();
+                    })
+                });
+            }
+        });
+    }
+
+    pub fn set_playtime(entity: &Entity<Self>, id: InstanceID, playtime: InstancePlaytime, cx: &mut App) {
+        entity.update(cx, |entries, cx| {
+            if let Some(instance) = entries.entries.get_mut(&id) {
+                instance.update(cx, |instance, cx| {
+                    instance.playtime = playtime;
+                    cx.notify();
+                });
+            }
+        });
+    }
+
+    pub fn move_to_top(entity: &Entity<Self>, id: InstanceID, cx: &mut App) {
+        entity.update(cx, |entries, cx| {
+            if let Some(index) = entries.entries.get_index_of(&id) {
+                entries.entries.move_index(index, 0);
+                let (_, entry) = entries.entries.get_index(0).unwrap();
+                cx.emit(InstanceMovedToTopEvent {
+                    instance: entry.read(cx).clone(),
+                });
+            }
+        });
+    }
+}
+
+#[derive(Clone)]
+pub struct InstanceEntry {
+    pub id: InstanceID,
+    pub name: SharedString,
+    pub icon: Option<UniqueBytes>,
+    pub title: SharedString,
+    pub root_path: Arc<Path>,
+    pub dot_minecraft_folder: Arc<Path>,
+    pub configuration: InstanceConfiguration,
+    pub playtime: InstancePlaytime,
+    pub status: InstanceStatus,
+    pub worlds_state: BridgeDataLoadState,
+    pub worlds: Entity<Option<Arc<[InstanceWorldSummary]>>>,
+    pub servers_state: BridgeDataLoadState,
+    pub servers: Entity<Option<Arc<[InstanceServerSummary]>>>,
+    pub content_states: ContentStates,
+    pub content: enum_map::EnumMap<ContentFolder, Entity<Option<Arc<[InstanceContentSummary]>>>>,
+    pub live_game_output: Option<Entity<crate::game_output::GameOutputRoot>>,
+}
+
+#[derive(Clone)]
+pub struct ContentStates {
+    instance_id: InstanceID,
+    backend_handle: BackendHandle,
+    load_state: enum_map::EnumMap<ContentFolder, (BridgeDataLoadState, AtomicOptionSerial)>,
+}
+
+impl ContentStates {
+    pub fn new(instance_id: InstanceID, states: enum_map::EnumMap<ContentFolder, BridgeDataLoadState>, backend_handle: BackendHandle) -> Self {
+        Self {
+            instance_id,
+            backend_handle,
+            load_state: states.map(|_, load_state| (load_state, AtomicOptionSerial::default())),
+        }
+    }
+
+    pub fn observe(&self, content_folder: ContentFolder) {
+        let (load_state, serial) = &self.load_state[content_folder];
+
+        load_state.set_observed();
+        if load_state.should_load() {
+            let message = MessageToBackend::RequestLoadContentFolder {
+                id: self.instance_id,
+                content_folder
+            };
+            self.backend_handle.send_with_serial(message, serial);
+        }
+    }
+
+    pub fn observe_all(&self) {
+        for (content_folder, (load_state, serial)) in &self.load_state {
+            load_state.set_observed();
+            if load_state.should_load() {
+                let message = MessageToBackend::RequestLoadContentFolder {
+                    id: self.instance_id,
+                    content_folder
+                };
+                self.backend_handle.send_with_serial(message, serial);
+            }
+        }
+    }
+}
+
+impl SelectItem for InstanceEntry {
+    type Value = Self;
+
+    fn title(&self) -> SharedString {
+        self.name.clone()
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self
+    }
+}
+
+impl PartialEq for InstanceEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+fn is_version_continuation(ascii_char: u8) -> bool {
+    ascii_char.is_ascii_digit() || ascii_char == b'.'
+}
+
+impl InstanceEntry {
+    pub fn title(&self) -> SharedString {
+        self.title.clone()
+    }
+
+    fn create_title(&self) -> SharedString {
+        let lower = self.name.to_ascii_lowercase();
+
+        let loader_string = self.configuration.loader.pretty_name();
+        let loader_string_lower = loader_string.to_ascii_lowercase();
+        let contains_loader = lower.contains(&loader_string_lower);
+
+        let contains_minecraft_version = if let Some(index) = lower.find(self.configuration.minecraft_version.as_str()) {
+            let lower_bytes = lower.as_bytes();
+            let next = index + self.configuration.minecraft_version.len();
+            if index > 0 && is_version_continuation(lower_bytes[index-1]) {
+                false
+            } else if next < lower_bytes.len() && is_version_continuation(lower_bytes[next]) {
+                false
+            } else {
+                true
+            }
+        } else {
+            false
+        };
+
+        match (contains_loader, contains_minecraft_version) {
+            (false, false) => {
+                format!("{} ({} {})", self.name, loader_string, self.configuration.minecraft_version).into()
+            },
+            (false, true) => {
+                format!("{} ({})", self.name, loader_string).into()
+            },
+            (true, false) => {
+                format!("{} ({})", self.name, self.configuration.minecraft_version).into()
+            },
+            (true, true) => {
+                self.name.clone()
+            }
+        }
+    }
+}
+
+impl EventEmitter<InstanceAddedEvent> for InstanceEntries {}
+
+pub struct InstanceAddedEvent {
+    pub instance: InstanceEntry,
+}
+
+impl EventEmitter<InstanceMovedToTopEvent> for InstanceEntries {}
+
+pub struct InstanceMovedToTopEvent {
+    pub instance: InstanceEntry,
+}
+
+impl EventEmitter<InstanceModifiedEvent> for InstanceEntries {}
+
+pub struct InstanceModifiedEvent {
+    pub instance: InstanceEntry,
+}
+
+impl EventEmitter<InstanceRemovedEvent> for InstanceEntries {}
+
+pub struct InstanceRemovedEvent {
+    pub id: InstanceID,
+}

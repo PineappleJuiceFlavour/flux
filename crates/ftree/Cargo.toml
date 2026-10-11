@@ -1,0 +1,21 @@
+[package]
+name = "ftree"
+version = "1.2.0"
+edition = "2021"
+documentation = "https://docs.rs/ftree/"
+repository = "https://github.com/brurucy/ftree"
+license = "Apache-2.0 OR MIT"
+description = "A very fast fenwick tree implementation"
+keywords = ["sum", "prefix", "fenwick", "tree", "nostd"]
+categories = ["data-structures"]
+readme = "README.md"
+
+
+[dependencies]
+serde = { version = "1.0.151", optional = true, features = ["derive"] }
+
+[dev-dependencies]
+ntest = "0.9"
+
+[features]
+serde = ["dep:serde"]

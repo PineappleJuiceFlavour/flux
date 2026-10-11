@@ -1,0 +1,28 @@
+[package]
+name = "auth"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+schema.workspace = true
+reqwest.workspace = true
+oauth2.workspace = true
+chrono.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true
+url.workspace = true
+uuid.workspace = true
+tokio.workspace = true
+httparse.workspace = true
+log.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+oo7 = { version = "0.6", default-features = false, features = ["native_crypto", "async-std"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework.workspace = true
+security-framework-sys.workspace = true

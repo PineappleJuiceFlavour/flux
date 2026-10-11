@@ -1,0 +1,45 @@
+[package]
+name = "rust-embed-impl"
+version = "8.12.0"
+description = "Rust Custom Derive Macro which loads files into the rust binary at compile time during release and loads the file from the fs during dev"
+readme = "README.md"
+documentation = "https://docs.rs/rust-embed"
+repository = "https://pyrossh.dev/repos/rust-embed"
+license = "MIT"
+keywords = ["http", "rocket", "static", "web", "server"]
+categories = ["web-programming::http-server"]
+authors = ["pyrossh"]
+edition = "2018"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+rust-embed-utils = { version = "8.12.0", path = "../utils" }
+
+# Unconditional (host-only, this is a proc-macro crate) so that the `__mimetype_of`
+# proc macro can always compute a mimetype regardless of how the `mime-guess`
+# feature resolves for the host. Whether the result is actually used is decided
+# target-side by the `__rust_embed_metadata!` macro in `rust-embed-utils`.
+mime_guess = "2.0.4"
+
+syn = { version = "2", default-features = false, features = [
+  "derive",
+  "parsing",
+  "proc-macro",
+  "printing",
+] }
+quote = "1"
+proc-macro2 = "1"
+walkdir = "2.3.1"
+
+[dependencies.shellexpand]
+version = "3"
+optional = true
+
+[features]
+debug-embed = []
+interpolate-folder-path = ["shellexpand"]
+compression = []
+include-exclude = ["rust-embed-utils/include-exclude"]
+deterministic-timestamps = []

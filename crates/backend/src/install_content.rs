@@ -1,0 +1,1177 @@
+use std::{ffi::{OsStr, OsString}, io::Write, path::Path, sync::Arc};
+
+use bridge::{
+    install::{ContentDownload, ContentInstall, ContentInstallFile, ContentInstallPath, InstallTarget}, instance::{ContentFolder, ContentSummary, ContentType, ModpackFileSource}, manual_download::ManualCurseforgeDownload, modal_action::{ModalAction, ProgressTrackerFinishType}, safe_path::SafePath
+};
+use parking_lot::Mutex;
+use reqwest::StatusCode;
+use rustc_hash::{FxHashSet};
+use schema::{content::{ContentInstallReason, ContentSource}, curseforge::{CURSEFORGE_API_KEY, CURSEFORGE_RELATION_TYPE_REQUIRED_DEPENDENCY, CachedCurseforgeFileInfo, CurseforgeGetFilesRequest, CurseforgeGetModFilesRequest, CurseforgeModLoaderType}, loader::Loader, modrinth::{ModrinthDependencyType, ModrinthLoader, ModrinthProjectVersionsRequest}};
+use serde::Serialize;
+use sha1::{Digest, Sha1};
+use strum::IntoEnumIterator;
+use ustr::Ustr;
+
+use crate::{BackendState, instance::Instance, metadata::{items::{CurseforgeGetFilesMetadataItem, CurseforgeGetModFilesMetadataItem, CurseforgeProjectItem, ModrinthProjectVersionsMetadataItem, ModrinthVersionMetadataItem}, manager::MetaLoadError}};
+
+#[derive(thiserror::Error, Debug)]
+pub enum ContentInstallError {
+    #[error("Unable to find appropriate version")]
+    UnableToFindVersion,
+    #[error("Invalid filename: {0}")]
+    InvalidFilename(Arc<str>),
+    #[error("Failed to download remote content")]
+    Reqwest(#[from] reqwest::Error),
+    #[error("Remote server returned non-200 status code: {0}")]
+    NotOK(StatusCode),
+    #[error("Downloaded file had the wrong size")]
+    WrongFilesize,
+    #[error("Downloaded file had the wrong hash")]
+    WrongHash,
+    #[error("Missing required sha1 hash")]
+    MissingHash,
+    #[error("Hash isn't a valid sha1 hash:\n{0}")]
+    InvalidHash(Arc<str>),
+    #[error("Failed to perform I/O operation:\n{0}")]
+    IoError(#[from] std::io::Error),
+    #[error("Failed to load metadata:\n{0}")]
+    MetaLoadError(#[from] MetaLoadError),
+    #[error("Mismatched project id for version {0}, expected {1} got {2}")]
+    MismatchedProjectIdForVersion(Arc<str>, Arc<str>, Arc<str>),
+    #[error("Invalid url: {0}")]
+    InvalidUrl(#[from] url::ParseError),
+    #[error("No filename")]
+    NoFilename,
+    #[error("Content already installed")]
+    ContentAlreadyInstalled,
+    #[error("The mod author has blocked downloads from third-party launchers")]
+    NoThirdPartyDownloads,
+}
+
+struct InstallFromContentLibrary {
+    filename: Arc<str>,
+    from: Arc<Path>,
+    replace: Option<Arc<Path>>,
+    install_path: Option<Arc<Path>>,
+    mod_summary: Arc<ContentSummary>,
+    dependencies: Vec<ContentInstallFile>,
+}
+
+#[derive(Clone)]
+struct FilenameAndExtension {
+    filename: Option<OsString>,
+    extension: Option<OsString>,
+}
+
+#[derive(Serialize, Clone)]
+struct ModrinthDownloadMeta {
+    reason: ContentInstallReason,
+    game_version: Ustr,
+    loader: Loader,
+}
+
+impl From<&SafePath> for FilenameAndExtension {
+    fn from(value: &SafePath) -> Self {
+        FilenameAndExtension {
+            filename: value.file_name().map(OsString::from),
+            extension: value.extension().map(OsString::from),
+        }
+    }
+}
+
+impl From<&Path> for FilenameAndExtension {
+    fn from(value: &Path) -> Self {
+        FilenameAndExtension {
+            filename: value.file_name().map(OsString::from),
+            extension: value.extension().map(OsString::from),
+        }
+    }
+}
+
+#[derive(Default)]
+struct InstalledContentIds {
+    modrinth_projects: FxHashSet<Arc<str>>,
+    curseforge_projects: FxHashSet<u32>,
+    summary_ids: FxHashSet<Arc<str>>,
+}
+
+impl BackendState {
+    pub async fn install_content(self: &Arc<Self>, content: ContentInstall, modal_action: ModalAction) {
+        let needs_installed_content_ids = content.files.iter().any(|content_file| {
+            match content_file.download {
+                ContentDownload::Modrinth { install_dependencies, .. } | ContentDownload::Curseforge { install_dependencies, .. } => {
+                    if install_dependencies {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+            false
+        });
+
+        let installed_content_ids: Option<Mutex<InstalledContentIds>> = if needs_installed_content_ids {
+            let mut installed_content_ids = InstalledContentIds::default();
+
+            if let InstallTarget::Instance(instance) = content.target {
+                let content_futures = ContentFolder::iter().map(|folder| {
+                    Instance::load_content(self.clone(), instance, folder)
+                });
+                let content_summaries = futures::future::join_all(content_futures).await;
+                for summaries in content_summaries {
+                    if let Some(summaries) = summaries {
+                        for summary in summaries.iter() {
+                            match summary.content_source {
+                                ContentSource::ModrinthProject { ref project_id } => {
+                                    installed_content_ids.modrinth_projects.insert(project_id.clone());
+                                },
+                                ContentSource::CurseforgeProject { project_id } => {
+                                    installed_content_ids.curseforge_projects.insert(project_id);
+                                },
+                                _ => {}
+                            }
+                            if let Some(id) = &summary.content_summary.id {
+                                installed_content_ids.summary_ids.insert(id.clone());
+                            }
+                        }
+                    }
+                }
+            }
+
+            Some(Mutex::new(installed_content_ids))
+        } else {
+            None
+        };
+
+        let mut tasks = Vec::new();
+
+        for content_file in content.files.iter() {
+            tasks.push(self.install_into_content_library(&content, &modal_action, content_file, installed_content_ids.as_ref(), false));
+        }
+
+        let result: Result<Vec<InstallFromContentLibrary>, ContentInstallError> = futures::future::try_join_all(tasks).await;
+
+        let mut files = match result {
+            Ok(files) => files,
+            Err(error) => {
+                modal_action.set_finished_with_error(Arc::from(format!("{}", error).as_str()));
+                return;
+            }
+        };
+
+        let mut dependencies = Vec::new();
+        for file in &mut files {
+            dependencies.extend(std::mem::take(&mut file.dependencies));
+        }
+
+        while !dependencies.is_empty() {
+            let mut new_tasks = Vec::new();
+
+            for dependency in &dependencies {
+                new_tasks.push(self.install_into_content_library(&content, &modal_action, dependency, installed_content_ids.as_ref(), true));
+            }
+
+            let new_results = futures::future::join_all(new_tasks).await;
+
+            dependencies.clear();
+
+            for result in new_results {
+                let Ok(mut file) = result else {
+                    continue;
+                };
+                dependencies.extend(std::mem::take(&mut file.dependencies));
+                files.push(file);
+            }
+        }
+
+        let mut dot_minecraft_dir = None;
+        let mut instance_running = false;
+
+        let loader = content.loader;
+        let minecraft_version = content.minecraft_version;
+
+        if let bridge::install::InstallTarget::NewInstance { name, preset } = &content.target {
+            let mut name = name.clone();
+            if name.is_none() { // todo: remove this
+                name = determine_name_from_content(&files);
+            }
+            let name = name.as_deref().unwrap_or("New Instance");
+
+            // todo: use icon of mod/modpack/etc. for icon of instance
+            dot_minecraft_dir = self.create_instance_sanitized_with_preset(&name, &minecraft_version, loader, None, preset.as_deref())
+                .map(|v| v.join(".minecraft").into());
+        }
+
+        let mut instance_lock_guard = None;
+
+        if let bridge::install::InstallTarget::Instance(instance_id) = content.target {
+            let mut instance_state = self.instance_state.write();
+            if let Some(instance) = instance_state.instances.get_mut(instance_id) {
+                instance_running = !instance.processes.is_empty();
+
+                if instance.configuration.get().loader == Loader::Vanilla {
+                    instance.configuration.modify(|config| {
+                        config.loader = loader;
+                    });
+                }
+
+                dot_minecraft_dir = Some(instance.dot_minecraft_path.clone());
+            }
+            instance_lock_guard = Some(instance_state);
+        } else if dot_minecraft_dir.is_some() {
+            instance_lock_guard = Some(self.instance_state.write());
+        }
+
+        if let Some(dot_minecraft_dir) = dot_minecraft_dir {
+            let mods_dir = dot_minecraft_dir.join("mods");
+            let mut cannot_modify_while_running = false;
+
+            for install in files {
+                let Some(install_path) = install.install_path else {
+                    self.send.send_warning(format!("Unable to determine install path for {}", install.filename));
+                    continue;
+                };
+
+                let target_path = dot_minecraft_dir.join(&install_path);
+
+                if instance_running && target_path.starts_with(&mods_dir) {
+                    cannot_modify_while_running = true;
+                    continue;
+                }
+
+                let _ = std::fs::create_dir_all(target_path.parent().unwrap());
+
+                match crate::fs::fastcopy(&install.from, &target_path, true, true) {
+                    Ok(()) => {
+                        if let Some(replace) = install.replace {
+                            self.replace_aux_path(&replace, &install.mod_summary, &target_path);
+                            if matches!(install.mod_summary.extra, ContentType::ShaderPack) {
+                                Self::replace_shaderpack_settings_path(&replace, &target_path);
+                            }
+                            let replace_path: &Path = &replace;
+                            if replace_path != target_path.as_path() {
+                                let _ = std::fs::remove_file(&replace);
+                            }
+                        }
+                    },
+                    Err(err) => {
+                        log::error!("Failed to install content to {:?}: {err}", target_path);
+                        let message = format!("Failed to install content to {}: {err}", target_path.display());
+                        modal_action.set_finished_with_error(Arc::from(message.as_str()));
+                    },
+                }
+            }
+
+            if cannot_modify_while_running {
+                self.send.send_warning("Cannot modify mods folder while instance is running");
+            }
+        }
+
+        drop(instance_lock_guard);
+    }
+
+    async fn install_into_content_library(
+        &self,
+        content: &ContentInstall,
+        modal_action: &ModalAction,
+        content_file: &ContentInstallFile,
+        installed_content_ids: Option<&Mutex<InstalledContentIds>>,
+        skip_if_already_installed: bool,
+    ) -> Result<InstallFromContentLibrary, ContentInstallError> {
+        let download_meta = ModrinthDownloadMeta {
+            reason: content_file.reason,
+            game_version: content.minecraft_version,
+            loader: content.loader,
+        };
+
+        let content_install_file = match content_file.download {
+            ContentDownload::Modrinth { ref project_id, ref version_id, install_dependencies } => {
+                if let Some(installed_content_ids) = installed_content_ids {
+                    let unique = installed_content_ids.lock().modrinth_projects.insert(project_id.clone());
+                    if skip_if_already_installed && !unique {
+                        return Err(ContentInstallError::ContentAlreadyInstalled);
+                    }
+                }
+
+                let permit = self.content_install_semaphore.acquire().await;
+
+                let title = format!("Fetching versions for Modrinth project {}", project_id);
+                let tracker = modal_action.push_tracker(title.into());
+                tracker.add_total(1);
+
+                let mut is_wrong_version = false;
+                let mut is_wrong_loader = false;
+
+                let version = if let Some(version_id) = version_id {
+                    let version = self.meta.fetch(ModrinthVersionMetadataItem(version_id.clone())).await?;
+
+                    tracker.add_count(1);
+                    tracker.set_finished(ProgressTrackerFinishType::Normal);
+                    drop(tracker);
+
+                    Some(version)
+                } else {
+                    let modrinth_loader = content.loader.as_modrinth_loader();
+                    let loaders = if modrinth_loader != ModrinthLoader::Unknown {
+                        Some(Arc::from([modrinth_loader]))
+                    } else {
+                        None
+                    };
+
+                    let mut result = self.meta.fetch(ModrinthProjectVersionsMetadataItem(ModrinthProjectVersionsRequest {
+                        project_id: project_id.clone(),
+                        game_versions: Some(Arc::new([content.minecraft_version.into()])),
+                        loaders,
+                    })).await;
+
+                    tracker.add_count(1);
+
+                    let mut not_found = matches!(result, Err(MetaLoadError::NonOK(404))) ||
+                        result.as_ref().ok().map(|r| r.0.is_empty()).unwrap_or(false);
+                    if not_found && modrinth_loader != ModrinthLoader::Unknown {
+                        tracker.add_total(1);
+
+                        result = self.meta.fetch(ModrinthProjectVersionsMetadataItem(ModrinthProjectVersionsRequest {
+                            project_id: project_id.clone(),
+                            game_versions: Some(Arc::new([content.minecraft_version.into()])),
+                            loaders: None,
+                        })).await;
+                        not_found = matches!(result, Err(MetaLoadError::NonOK(404))) ||
+                            result.as_ref().ok().map(|r| r.0.is_empty()).unwrap_or(false);
+                        is_wrong_loader = true;
+
+                        tracker.add_count(1);
+                    }
+                    if not_found {
+                        tracker.add_total(1);
+
+                        result = self.meta.fetch(ModrinthProjectVersionsMetadataItem(ModrinthProjectVersionsRequest {
+                            project_id: project_id.clone(),
+                            game_versions: None,
+                            loaders: None,
+                        })).await;
+                        not_found = matches!(result, Err(MetaLoadError::NonOK(404))) ||
+                            result.as_ref().ok().map(|r| r.0.is_empty()).unwrap_or(false);
+                        is_wrong_loader = true;
+                        is_wrong_version = true;
+
+                        tracker.add_count(1);
+                    }
+
+                    tracker.set_finished(ProgressTrackerFinishType::from_err(not_found || result.is_err()));
+                    drop(tracker);
+
+                    result?.0.first().map(|v| Arc::new(v.clone()))
+                };
+
+                drop(permit);
+
+                let Some(version) = version else {
+                    return Err(ContentInstallError::UnableToFindVersion);
+                };
+
+                if &version.project_id != project_id {
+                    return Err(ContentInstallError::MismatchedProjectIdForVersion(
+                        version.id.clone(),
+                        project_id.clone(),
+                        version.project_id.clone()
+                    ));
+                }
+
+                let install_file = version
+                    .files
+                    .iter()
+                    .find(|file| file.primary)
+                    .unwrap_or(version.files.first().unwrap());
+
+                let url = &install_file.url;
+                let sha1 = &install_file.hashes.sha1;
+                let size = install_file.size;
+
+                let Some(safe_filename) = SafePath::new(&install_file.filename) else {
+                    return Err(ContentInstallError::InvalidFilename(install_file.filename.clone()));
+                };
+
+                let mut hash = [0u8; 20];
+                let Ok(_) = hex::decode_to_slice(&**sha1, &mut hash) else {
+                    log::warn!("File {} has invalid sha1: {}", install_file.filename, sha1);
+                    return Err(ContentInstallError::InvalidHash(sha1.clone()));
+                };
+
+                let source = ContentSource::ModrinthProject { project_id: project_id.clone() };
+                let (path, mod_summary) = self.download_file_into_library(&modal_action,
+                    (&safe_filename).into(), url, hash, size, Some(source), download_meta).await?;
+
+                if is_wrong_version && mod_summary.extra.is_strict_minecraft_version() {
+                    return Err(ContentInstallError::UnableToFindVersion);
+                }
+                if is_wrong_loader && mod_summary.extra.is_strict_loader() {
+                    return Err(ContentInstallError::UnableToFindVersion);
+                }
+
+                let content_folder_base = if let Some(content_folder) = mod_summary.extra.content_folder() {
+                    Some(Path::new(content_folder))
+                } else if let Some(loaders) = &version.loaders {
+                    let mut base = None;
+                    for loader in loaders.iter() {
+                        base = loader.install_directory();
+                        if base.is_some() {
+                            break;
+                        }
+                    }
+                    if let Some(base) = base {
+                        Some(Path::new(base))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let install_path = match &content_file.path {
+                    ContentInstallPath::Raw(path) => Some(path.clone()),
+                    ContentInstallPath::Safe(safe_path) => Some(safe_path.to_path(Path::new("")).into()),
+                    ContentInstallPath::ModpackFilePath(modpack_file_path) => {
+                        match modpack_file_path {
+                            bridge::instance::ModpackFilePath::Path(safe_path) => Some(safe_path.to_path(Path::new("")).into()),
+                            bridge::instance::ModpackFilePath::Filename(filename) => {
+                                if let Some(base) = content_folder_base {
+                                    Some(filename.to_path(base).into())
+                                } else {
+                                    None
+                                }
+                            },
+                        }
+                    },
+                    ContentInstallPath::Automatic => {
+                        if let Some(base) = content_folder_base {
+                            Some(safe_filename.to_path(base).into())
+                        } else {
+                            None
+                        }
+                    },
+                };
+
+                let dependencies = if install_dependencies {
+                    if let Some(dependencies) = &version.dependencies {
+                        dependencies.iter().filter_map(|dep| {
+                            if let Some(project_id) = &dep.project_id && dep.dependency_type == ModrinthDependencyType::Required {
+                                Some(ContentInstallFile {
+                                    replace_old: None,
+                                    path: ContentInstallPath::Automatic,
+                                    download: ContentDownload::Modrinth {
+                                        project_id: project_id.clone(),
+                                        version_id: dep.version_id.clone(),
+                                        install_dependencies: true
+                                    },
+                                    content_source: ContentSource::ModrinthProject { project_id: project_id.clone() },
+                                    reason: ContentInstallReason::Dependency,
+                                })
+                            } else {
+                                None
+                            }
+                        }).collect()
+                    } else {
+                        Default::default()
+                    }
+                } else {
+                    Default::default()
+                };
+
+                InstallFromContentLibrary {
+                    filename: install_file.filename.clone(),
+                    from: path,
+                    replace: content_file.replace_old.clone(),
+                    install_path,
+                    mod_summary,
+                    dependencies,
+                }
+            },
+            ContentDownload::Curseforge { project_id, install_dependencies } => {
+                if let Some(installed_content_ids) = installed_content_ids {
+                    let unique = installed_content_ids.lock().curseforge_projects.insert(project_id);
+                    if skip_if_already_installed && !unique {
+                        return Err(ContentInstallError::ContentAlreadyInstalled);
+                    }
+                }
+
+                let permit = self.content_install_semaphore.acquire().await;
+
+                let title = format!("Fetching versions for Curseforge project {}", project_id);
+                let tracker = modal_action.push_tracker(title.into());
+                tracker.add_total(1);
+
+                let mod_loader_type = match content.loader {
+                    Loader::Vanilla => None,
+                    Loader::Fabric => Some(CurseforgeModLoaderType::Fabric as u32),
+                    Loader::Forge => Some(CurseforgeModLoaderType::Forge as u32),
+                    Loader::NeoForge => Some(CurseforgeModLoaderType::NeoForge as u32),
+                };
+
+                let mut is_wrong_version = false;
+                let mut is_wrong_loader = false;
+
+                let mut result = self.meta.fetch(CurseforgeGetModFilesMetadataItem(&CurseforgeGetModFilesRequest {
+                    mod_id: project_id,
+                    game_version: content.minecraft_version.into(),
+                    mod_loader_type,
+                    release_types: None,
+                    page_size: Some(1)
+                })).await;
+
+                tracker.add_count(1);
+
+                let mut not_found = matches!(result, Err(MetaLoadError::NonOK(404))) ||
+                    result.as_ref().ok().map(|r| r.data.is_empty()).unwrap_or(false);
+                if not_found && mod_loader_type.is_some() {
+                    tracker.add_total(1);
+
+                    result = self.meta.fetch(CurseforgeGetModFilesMetadataItem(&CurseforgeGetModFilesRequest {
+                        mod_id: project_id,
+                        game_version: content.minecraft_version.into(),
+                        mod_loader_type: None,
+                        release_types: None,
+                        page_size: Some(1)
+                    })).await;
+                    not_found = matches!(result, Err(MetaLoadError::NonOK(404))) ||
+                        result.as_ref().ok().map(|r| r.data.is_empty()).unwrap_or(false);
+                    is_wrong_loader = true;
+
+                    tracker.add_count(1);
+                }
+                if not_found {
+                    tracker.add_total(1);
+
+                    result = self.meta.fetch(CurseforgeGetModFilesMetadataItem(&CurseforgeGetModFilesRequest {
+                        mod_id: project_id,
+                        game_version: None,
+                        mod_loader_type: None,
+                        release_types: None,
+                        page_size: Some(1)
+                    })).await;
+                    not_found = matches!(result, Err(MetaLoadError::NonOK(404))) ||
+                        result.as_ref().ok().map(|r| r.data.is_empty()).unwrap_or(false);
+                    is_wrong_loader = true;
+                    is_wrong_version = true;
+
+                    tracker.add_count(1);
+                }
+
+                tracker.set_finished(ProgressTrackerFinishType::from_err(not_found || result.is_err()));
+                drop(tracker);
+
+                drop(permit);
+
+                let versions = result?;
+                let Some(file) = versions.data.first() else {
+                    return Err(ContentInstallError::UnableToFindVersion);
+                };
+
+                if file.mod_id != project_id {
+                    return Err(ContentInstallError::MismatchedProjectIdForVersion(
+                        file.file_name.clone(),
+                        format!("{}", project_id.clone()).into(),
+                        format!("{}", file.mod_id).into()
+                    ));
+                }
+
+                let sha1 = file.hashes.iter()
+                    .find(|hash| hash.algo == 1).map(|hash| &hash.value);
+                let size = file.file_length as usize;
+
+                let Some(url) = file.download_url.as_ref() else {
+                    return Err(ContentInstallError::NoThirdPartyDownloads);
+                };
+
+                let Some(sha1) = sha1 else {
+                    return Err(ContentInstallError::MissingHash);
+                };
+
+                let Some(safe_filename) = SafePath::new(&file.file_name) else {
+                    return Err(ContentInstallError::InvalidFilename(file.file_name.clone()));
+                };
+
+                let mut hash = [0u8; 20];
+                let Ok(_) = hex::decode_to_slice(&**sha1, &mut hash) else {
+                    log::warn!("File {} has invalid sha1: {}", file.file_name, sha1);
+                    return Err(ContentInstallError::InvalidHash(sha1.clone()));
+                };
+
+                let source = ContentSource::CurseforgeProject { project_id };
+                let (path, mod_summary) = self.download_file_into_library(&modal_action,
+                    (&safe_filename).into(), url, hash, size, Some(source), download_meta).await?;
+
+                if is_wrong_version && mod_summary.extra.is_strict_minecraft_version() {
+                    return Err(ContentInstallError::UnableToFindVersion);
+                }
+                if is_wrong_loader && mod_summary.extra.is_strict_loader() {
+                    // todo: determine loader(s) from summary and check if it is compatible with the loader hint
+                    // todo: if we install a fabric mod on forge 1.20.1 / neoforge 1.21.1, we can install sinytra instead of erroring
+                    return Err(ContentInstallError::UnableToFindVersion);
+                }
+
+                let install_path = match &content_file.path {
+                    ContentInstallPath::Raw(path) => Some(path.clone()),
+                    ContentInstallPath::Safe(safe_path) => Some(safe_path.to_path(Path::new("")).into()),
+                    ContentInstallPath::ModpackFilePath(modpack_file_path) => {
+                        match modpack_file_path {
+                            bridge::instance::ModpackFilePath::Path(safe_path) => Some(safe_path.to_path(Path::new("")).into()),
+                            bridge::instance::ModpackFilePath::Filename(filename) => {
+                                if let Some(base) = mod_summary.extra.content_folder() {
+                                    Some(filename.to_path(Path::new(base)).into())
+                                } else {
+                                    None
+                                }
+                            },
+                        }
+                    },
+                    ContentInstallPath::Automatic => {
+                        if let Some(base) = mod_summary.extra.content_folder() {
+                            Some(safe_filename.to_path(Path::new(base)).into())
+                        } else {
+                            None
+                        }
+                    },
+                };
+
+                let dependencies = if install_dependencies {
+                    file.dependencies.iter().filter_map(|dep| {
+                        if dep.relation_type == CURSEFORGE_RELATION_TYPE_REQUIRED_DEPENDENCY {
+                            Some(ContentInstallFile {
+                                replace_old: None,
+                                path: ContentInstallPath::Automatic,
+                                download: ContentDownload::Curseforge {
+                                    project_id: dep.mod_id,
+                                    install_dependencies: true
+                                },
+                                content_source: ContentSource::CurseforgeProject { project_id },
+                                reason: ContentInstallReason::Dependency,
+                            })
+                        } else {
+                            None
+                        }
+                    }).collect()
+                } else {
+                    Default::default()
+                };
+
+                InstallFromContentLibrary {
+                    filename: file.file_name.clone(),
+                    from: path,
+                    replace: content_file.replace_old.clone(),
+                    install_path,
+                    mod_summary,
+                    dependencies,
+                }
+            },
+            ContentDownload::Url { ref url, ref sha1, size } => {
+                let mut url_filename = None;
+                let name: FilenameAndExtension = match &content_file.path {
+                    ContentInstallPath::Raw(path) => (&**path).into(),
+                    ContentInstallPath::Safe(safe_path) => safe_path.into(),
+                    ContentInstallPath::ModpackFilePath(modpack_file_path) => {
+                        match modpack_file_path {
+                            bridge::instance::ModpackFilePath::Path(safe_path) => safe_path.into(),
+                            bridge::instance::ModpackFilePath::Filename(filename) => filename.into(),
+                        }
+                    },
+                    ContentInstallPath::Automatic => {
+                        url_filename = Some(url_to_filename(url)?);
+                        url_filename.as_ref().unwrap().into()
+                    },
+                };
+
+                let filename = name.filename.as_ref().map(|s| s.to_string_lossy()).unwrap_or_default().into();
+
+                let mut source = content_file.content_source.clone();
+                if source.can_be_replaced() {
+                    if let Some(automatic_source) = content_source_from_url(&*url) {
+                        if source.should_replace_with(&automatic_source) {
+                            source = automatic_source;
+                        }
+                    }
+                }
+                let (path, mod_summary) = self.download_file_into_library(&modal_action,
+                    name, url, *sha1, size, Some(source), download_meta).await?;
+
+                let install_path = match &content_file.path {
+                    ContentInstallPath::Raw(path) => Some(path.clone()),
+                    ContentInstallPath::Safe(safe_path) => Some(safe_path.to_path(Path::new("")).into()),
+                    ContentInstallPath::ModpackFilePath(modpack_file_path) => {
+                        match modpack_file_path {
+                            bridge::instance::ModpackFilePath::Path(safe_path) => Some(safe_path.to_path(Path::new("")).into()),
+                            bridge::instance::ModpackFilePath::Filename(filename) => {
+                                if let Some(base) = mod_summary.extra.content_folder() {
+                                    Some(filename.to_path(Path::new(base)).into())
+                                } else {
+                                    None
+                                }
+                            },
+                        }
+                    },
+                    ContentInstallPath::Automatic => {
+                        if let Some(base) = mod_summary.extra.content_folder() {
+                            Some(url_filename.as_ref().unwrap().to_path(Path::new(base)).into())
+                        } else {
+                            None
+                        }
+                    },
+                };
+
+                InstallFromContentLibrary {
+                    filename,
+                    from: path,
+                    replace: content_file.replace_old.clone(),
+                    install_path,
+                    mod_summary,
+                    dependencies: Default::default(),
+                }
+            },
+            ContentDownload::File { path: ref copy_path } => {
+                let title = format!("Copying {}", copy_path.file_name().unwrap().to_string_lossy());
+                let tracker = modal_action.push_tracker(title.into());
+
+                tracker.set_total(3);
+
+                let data = tokio::fs::read(copy_path).await?;
+
+                tracker.set_count(1);
+
+                let mut hasher = Sha1::new();
+                hasher.update(&data);
+                let hash: [u8; 20] = hasher.finalize().into();
+
+                let hash_as_str = hex::encode(hash);
+
+                let hash_folder = self.directories.content_library_dir.join(&hash_as_str[..2]);
+                let _ = tokio::fs::create_dir_all(&hash_folder).await;
+                let mut path = hash_folder.join(hash_as_str);
+
+                let extension = match &content_file.path {
+                    ContentInstallPath::Raw(path) => path.extension(),
+                    ContentInstallPath::Safe(safe_path) => safe_path.extension().map(OsStr::new),
+                    ContentInstallPath::ModpackFilePath(modpack_file_path) => modpack_file_path.extension().map(OsStr::new),
+                    ContentInstallPath::Automatic => copy_path.extension(),
+                };
+
+                if let Some(extension) = extension {
+                    path.set_extension(extension);
+                }
+
+                let path: Arc<Path> = path.into();
+
+                let mod_summary = {
+                    let path = path.clone();
+                    let mod_metadata_manager = self.mod_metadata_manager.clone();
+                    let tracker = tracker.clone();
+                    let extension = extension.map(OsString::from);
+                    tokio::task::spawn_blocking(move || {
+                        let valid_hash_on_disk = crate::fs::check_sha1_hash(&path, hash).unwrap_or(false);
+
+                        tracker.set_count(2);
+
+                        if !valid_hash_on_disk {
+                            std::fs::write(&path, &data)?;
+                        }
+
+                        std::io::Result::Ok(mod_metadata_manager.get_bytes(&data, extension.as_deref()))
+                    }).await.unwrap()?
+                };
+
+                tracker.set_count(3);
+
+                let install_path = match &content_file.path {
+                    ContentInstallPath::Raw(path) => Some(path.clone()),
+                    ContentInstallPath::Safe(safe_path) => Some(safe_path.to_path(Path::new("")).into()),
+                    ContentInstallPath::ModpackFilePath(modpack_file_path) => {
+                        match modpack_file_path {
+                            bridge::instance::ModpackFilePath::Path(safe_path) => Some(safe_path.to_path(Path::new("")).into()),
+                            bridge::instance::ModpackFilePath::Filename(filename) => {
+                                if let Some(base) = mod_summary.extra.content_folder() {
+                                    Some(filename.to_path(Path::new(base)).into())
+                                } else {
+                                    None
+                                }
+                            },
+                        }
+                    },
+                    ContentInstallPath::Automatic => {
+                        let Some(file_name) = copy_path.file_name() else {
+                            return Err(ContentInstallError::NoFilename);
+                        };
+
+                        if let Some(base) = mod_summary.extra.content_folder() {
+                            Some(Path::new(base).join(file_name).into())
+                        } else {
+                            None
+                        }
+                    },
+                };
+
+                InstallFromContentLibrary {
+                    filename: path.file_name().map(|s| s.to_string_lossy()).unwrap_or_default().into(),
+                    from: path,
+                    replace: content_file.replace_old.clone(),
+                    install_path,
+                    mod_summary,
+                    dependencies: Default::default(),
+                }
+            },
+        };
+
+        if let Some(installed_content_ids) = installed_content_ids &&
+            let Some(id) = &content_install_file.mod_summary.id
+        {
+            let unique = installed_content_ids.lock().summary_ids.insert(id.clone());
+            if skip_if_already_installed && !unique {
+                return Err(ContentInstallError::ContentAlreadyInstalled);
+            }
+        }
+
+        Ok(content_install_file)
+    }
+
+    fn replace_aux_path(&self, replace: &Path, new_summary: &Arc<ContentSummary>, new_path: &Path) {
+        let old_summary = self.mod_metadata_manager.get_path(&replace);
+        if ContentSummary::is_unknown(&old_summary) {
+            return;
+        }
+
+        let Some(old_aux_path) = crate::fs::pandora_aux_path(&old_summary.id, &old_summary.name, &replace) else {
+            return;
+        };
+
+        if !old_aux_path.exists() {
+            return;
+        }
+
+        if ContentSummary::is_unknown(&new_summary) {
+            _ = std::fs::remove_file(&old_aux_path);
+            return;
+        }
+
+        let Some(new_aux_path) = crate::fs::pandora_aux_path(&new_summary.id, &new_summary.name, new_path) else {
+            _ = std::fs::remove_file(&old_aux_path);
+            return;
+        };
+
+        if old_aux_path != new_aux_path {
+            _ = std::fs::rename(&old_aux_path, &new_aux_path);
+        }
+    }
+
+    fn replace_shaderpack_settings_path(old_path: &Path, new_path: &Path) {
+        let old_txt = {
+            let mut p = old_path.to_path_buf();
+            p.add_extension("txt");
+            p
+        };
+        let new_txt = {
+            let mut p = new_path.to_path_buf();
+            p.add_extension("txt");
+            p
+        };
+
+        if old_txt != new_txt && old_txt.exists() && !new_txt.exists() {
+            if let Err(err) = std::fs::rename(&old_txt, &new_txt) {
+                log::error!("Failed to rename shaderpack settings file from {:?} to {:?}: {err}", old_txt, new_txt);
+            }
+        }
+    }
+
+    async fn download_file_into_library(
+        &self,
+        modal_action: &ModalAction,
+        name: FilenameAndExtension,
+        url: &Arc<str>,
+        sha1: [u8; 20],
+        size: usize,
+        source: Option<ContentSource>,
+        download_meta: ModrinthDownloadMeta
+    ) -> Result<(Arc<Path>, Arc<ContentSummary>), ContentInstallError> {
+        let mut result = self.download_file_into_library_inner(modal_action, name, url.clone(), sha1, size, source, download_meta.clone()).await?;
+
+        let mut curseforge_file_ids = Vec::new();
+
+        let files = if let ContentType::ModrinthModpack { files, .. } = &result.1.extra {
+            Some(files)
+        } else if let ContentType::CurseforgeModpack { unknown_files, files, .. } = &result.1.extra {
+            for unknown_file in unknown_files.iter() {
+                curseforge_file_ids.push(unknown_file.file_id);
+            }
+
+            Some(files)
+        } else {
+            return Ok(result);
+        };
+
+        let mut tasks = Vec::new();
+        let mut manual_downloads: Vec<ManualCurseforgeDownload> = Vec::new();
+
+        if let Some(files) = files {
+            for file in files.iter() {
+                if let Some(summary) = &file.summary && summary.hash == file.hash {
+                    match &file.source {
+                        ModpackFileSource::DownloadUrl { url, .. } => {
+                            let source = content_source_from_url(&*url);
+                            if let Some(source) = source {
+                                self.mod_metadata_manager.set_content_source(file.hash, source);
+                            }
+                        },
+                        ModpackFileSource::DownloadCurseforge { .. } => {},
+                        ModpackFileSource::Builtin { .. } => {},
+                    }
+                    continue;
+                }
+
+                match &file.source {
+                    ModpackFileSource::DownloadUrl { url, size } => {
+                        let name = FilenameAndExtension {
+                            filename: file.path.file_name().map(OsString::from),
+                            extension: file.path.extension().map(OsString::from),
+                        };
+
+                        let meta = ModrinthDownloadMeta {
+                            reason: ContentInstallReason::Modpack,
+                            game_version: download_meta.game_version,
+                            loader: download_meta.loader,
+                        };
+                        let source = content_source_from_url(&*url);
+                        tasks.push(self.download_file_into_library_inner(modal_action, name, url.clone(), file.hash, *size, source, meta));
+                    },
+                    ModpackFileSource::DownloadCurseforge { file_id } => {
+                        curseforge_file_ids.push(*file_id);
+                    },
+                    ModpackFileSource::Builtin { .. } => {},
+                }
+            }
+        }
+
+        if !curseforge_file_ids.is_empty() {
+            // todo: grab semaphore and add progress bar to modal_action while fetching
+
+            let files_result = self.meta.fetch(CurseforgeGetFilesMetadataItem(&CurseforgeGetFilesRequest {
+                file_ids: curseforge_file_ids,
+            })).await;
+
+            if let Ok(files) = files_result {
+                let mut manual_download_files = Vec::new();
+                let mut manual_download_tasks = Vec::new();
+
+                for file in files.data.iter() {
+                    let sha1 = file.hashes.iter()
+                        .find(|hash| hash.algo == 1).map(|hash| &hash.value);
+                    let Some(sha1) = sha1 else {
+                        continue;
+                    };
+
+                    let mut hash = [0u8; 20];
+                    let Ok(_) = hex::decode_to_slice(&**sha1, &mut hash) else {
+                        log::warn!("File {} has invalid sha1: {}", file.file_name, sha1);
+                        continue;
+                    };
+
+                    self.mod_metadata_manager.set_cached_curseforge_info(file.id, CachedCurseforgeFileInfo {
+                        hash,
+                        filename: file.file_name.clone(),
+                        disabled_third_party_downloads: file.download_url.is_none()
+                    });
+
+                    let Some(path) = SafePath::new(&file.file_name) else {
+                        log::warn!("Skipping file because of invalid filename: {}", file.file_name);
+                        continue;
+                    };
+
+                    let name = FilenameAndExtension {
+                        filename: path.file_name().map(OsString::from),
+                        extension: path.extension().map(OsString::from),
+                    };
+
+                    let meta = ModrinthDownloadMeta {
+                        reason: ContentInstallReason::Modpack,
+                        game_version: download_meta.game_version,
+                        loader: download_meta.loader,
+                    };
+                    if let Some(download_url) = &file.download_url {
+                        let source = ContentSource::CurseforgeProject { project_id: file.mod_id };
+                        tasks.push(self.download_file_into_library_inner(modal_action, name,
+                            download_url.clone(), hash, file.file_length as usize, Some(source), meta));
+                    } else {
+                        manual_download_files.push((file.clone(), hash));
+                        manual_download_tasks.push(self.meta.fetch(CurseforgeProjectItem { project_id: file.mod_id }));
+                    }
+                }
+
+                if !manual_download_tasks.is_empty() {
+                    let curseforge_projects = futures::future::join_all(manual_download_tasks).await;
+
+                    let zipped = curseforge_projects.into_iter().zip(manual_download_files.into_iter());
+                    for (project, (file, hash)) in zipped {
+                        let Ok(project) = project else {
+                            continue;
+                        };
+
+                        manual_downloads.push(ManualCurseforgeDownload::new(&file, &project, hash));
+                    }
+                }
+            }
+        }
+
+        if manual_downloads.is_empty() {
+            _ = futures::future::try_join_all(tasks).await;
+        } else {
+            _ = futures::join! {
+                futures::future::try_join_all(tasks),
+                self.create_manual_curseforge_download_session(manual_downloads),
+            };
+        }
+
+        result.1 = self.mod_metadata_manager.get_path(&result.0);
+
+        Ok(result)
+    }
+
+    async fn download_file_into_library_inner(
+        &self,
+        modal_action: &ModalAction,
+        name: FilenameAndExtension,
+        url: Arc<str>,
+        sha1: [u8; 20],
+        size: usize,
+        source: Option<ContentSource>,
+        download_meta: ModrinthDownloadMeta
+    ) -> Result<(Arc<Path>, Arc<ContentSummary>), ContentInstallError> {
+        let hash_as_str = hex::encode(sha1);
+
+        let hash_folder = self.directories.content_library_dir.join(&hash_as_str[..2]);
+        let _ = tokio::fs::create_dir_all(&hash_folder).await;
+        let mut path = hash_folder.join(hash_as_str);
+
+        if let Some(extension) = name.extension {
+            path.set_extension(extension);
+        }
+
+        let path: Arc<Path> = path.into();
+
+        let _permit = self.content_install_semaphore.acquire().await.unwrap();
+
+        let _signal = crate::fs::lock_file(path.clone()).await;
+
+        let file_name = name.filename.clone();
+
+        if let Some(source) = source {
+            self.mod_metadata_manager.set_content_source(sha1, source);
+        }
+
+        let title = format!("Downloading {}", file_name.as_deref().map(|s| s.to_string_lossy()).unwrap_or(std::borrow::Cow::Borrowed("???")));
+        let tracker = modal_action.push_tracker(title.into());
+
+        tracker.set_total(size);
+
+        let valid_hash_on_disk = {
+            let path = path.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::fs::check_sha1_hash(&path, sha1).unwrap_or(false)
+            }).await.unwrap()
+        };
+
+        if valid_hash_on_disk {
+            tracker.set_count(size);
+            tracker.set_finished(ProgressTrackerFinishType::Normal);
+            let summary = self.mod_metadata_manager.get_path(&path);
+            return Ok((path, summary));
+        }
+
+        let mut builder = self.http_client_provider.redirecting().get(&*url)
+            .header("modrinth-download-meta", serde_json::to_string(&download_meta).unwrap_or_default());
+
+        if let Ok(url) = url::Url::parse(&*url) {
+            if let Some(host) = url.host_str() && host.ends_with("forgecdn.net") {
+                builder = builder.header("x-api-key", CURSEFORGE_API_KEY);
+            }
+        }
+
+        let response = builder.send().await?;
+
+        if response.status() != StatusCode::OK {
+            return Err(ContentInstallError::NotOK(response.status()));
+        }
+
+        let mut file = std::fs::File::create(&path)?;
+
+        use futures::StreamExt;
+        let mut stream = response.bytes_stream();
+
+        let mut total_bytes = 0;
+
+        let mut hasher = Sha1::new();
+        while let Some(item) = stream.next().await {
+            let item = item?;
+
+            total_bytes += item.len();
+            tracker.add_count(item.len());
+
+            hasher.write_all(&item)?;
+            file.write_all(&item)?;
+        }
+
+        tracker.set_finished(ProgressTrackerFinishType::Normal);
+
+        let actual_hash = hasher.finalize();
+
+        let wrong_hash = *actual_hash != sha1;
+        let wrong_size = total_bytes != size;
+
+        if wrong_hash || wrong_size {
+            let _ = file.set_len(0);
+            drop(file);
+            let _ = std::fs::remove_file(&path);
+
+            if wrong_hash {
+                log::warn!("Expected hash {}, got {}", hex::encode(sha1), hex::encode(actual_hash));
+                return Err(ContentInstallError::WrongHash);
+            } else if wrong_size {
+                return Err(ContentInstallError::WrongFilesize);
+            } else {
+                unreachable!();
+            }
+        }
+
+        let summary = self.mod_metadata_manager.get_path(&path);
+        Ok((path, summary))
+    }
+}
+
+fn determine_name_from_content(content: &[InstallFromContentLibrary]) -> Option<Arc<str>> {
+    for content in content {
+        if let Some(name) = &content.mod_summary.name {
+            return Some(name.clone());
+        }
+    }
+    None
+}
+
+fn url_to_filename(url: &str) -> Result<SafePath, ContentInstallError> {
+    let parsed = url::Url::parse(url)?;
+
+    let filename = parsed.path_segments()
+        .and_then(|s| s.last())
+        .to_owned();
+
+    let Some(filename) = filename else {
+        return Err(ContentInstallError::NoFilename);
+    };
+
+    let Some(filename) = SafePath::new(filename) else {
+        return Err(ContentInstallError::InvalidFilename(filename.into()));
+    };
+
+    Ok(filename)
+}
+
+fn content_source_from_url(url: &str) -> Option<ContentSource> {
+    if let Some(remainder) = url.strip_prefix("https://cdn.modrinth.com/data/") {
+        let (project_id, _) = remainder.split_once('/')?;
+        return Some(ContentSource::ModrinthProject { project_id: project_id.into() });
+    }
+    None
+}

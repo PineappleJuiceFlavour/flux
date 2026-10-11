@@ -1,0 +1,28 @@
+[package]
+name = "pandora_launcher"
+version.workspace = true
+edition.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "Flux"
+path = "src/main.rs"
+
+[dependencies]
+frontend.workspace = true
+backend.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+bridge.workspace = true
+backtrace.workspace = true
+parking_lot.workspace = true
+directories.workspace = true
+clap.workspace = true
+native-dialog.workspace = true
+fern.workspace = true
+log.workspace = true
+humantime.workspace = true
+command.workspace = true
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+winresource = "0.1.29"

@@ -1,0 +1,17 @@
+pub mod instance;
+pub mod import;
+pub mod instances_page;
+pub mod home_page;
+pub mod game_page;
+pub mod games_home_page;
+pub mod import_games_page;
+pub mod add_game_page;
+pub mod emulators_page;
+pub mod controllers_page;
+pub mod curseforge_page;
+pub mod modrinth_page;
+pub mod modrinth_project_page;
+pub mod page;
+pub mod quickplay;
+pub mod skins_page;
+pub mod syncing_page;

@@ -1,0 +1,17 @@
+/// Microsoft (Azure) application used for sign-in. The consent screen shows that app's registered
+/// name, so a Flux-branded sign-in needs Flux's own Azure app, approved by Mojang for Minecraft
+/// services: build with `FLUX_MSA_CLIENT_ID=<id> cargo build --release`. Without it Flux uses
+/// Pandora Launcher's approved app, and Microsoft's page says "Pandora Launcher".
+pub const CLIENT_ID: &str = match option_env!("FLUX_MSA_CLIENT_ID") {
+    Some(id) => id,
+    None => "e5226706-5096-431d-9516-ae48fe263401",
+};
+pub const AUTH_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize";
+pub const TOKEN_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
+pub const REDIRECT_URL_BASE: &str = "http://localhost:3160";
+pub const REDIRECT_URL: &str = "http://localhost:3160/auth";
+pub const SERVER_ADDRESS: &str = "127.0.0.1:3160";
+pub const XBOX_AUTHENTICATE_URL: &str = "https://user.auth.xboxlive.com/user/authenticate";
+pub const XSTS_AUTHORIZE_URL: &str = "https://xsts.auth.xboxlive.com/xsts/authorize";
+pub const MINECRAFT_LOGIN_WITH_XBOX_URL: &str = "https://api.minecraftservices.com/authentication/login_with_xbox";
+pub const MINECRAFT_PROFILE_URL: &str = "https://api.minecraftservices.com/minecraft/profile";

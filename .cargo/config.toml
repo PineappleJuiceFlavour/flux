@@ -1,0 +1,39 @@
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/longbridge/gpui-component.git?rev=ff3eb1128ac1058f1bb88e777744ce1237aa3b79"]
+git = "https://github.com/longbridge/gpui-component.git"
+rev = "ff3eb1128ac1058f1bb88e777744ce1237aa3b79"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/font-kit?rev=94b0f28166665e8fd2f53ff6d268a14955c82269"]
+git = "https://github.com/zed-industries/font-kit"
+rev = "94b0f28166665e8fd2f53ff6d268a14955c82269"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/reqwest.git?rev=c15662463bda39148ba154100dd44d3fba5873a4"]
+git = "https://github.com/zed-industries/reqwest.git"
+rev = "c15662463bda39148ba154100dd44d3fba5873a4"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/scap?rev=4afea48c3b002197176fb19cd0f9b180dd36eaac"]
+git = "https://github.com/zed-industries/scap"
+rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/wasm_thread?rev=0cf96c7708dfb97ccf3da50347e25edcf75d6937"]
+git = "https://github.com/zed-industries/wasm_thread"
+rev = "0cf96c7708dfb97ccf3da50347e25edcf75d6937"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/xim-rs.git?rev=16f35a2c881b815a2b6cdfd6687988e84f8447d8"]
+git = "https://github.com/zed-industries/xim-rs.git"
+rev = "16f35a2c881b815a2b6cdfd6687988e84f8447d8"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/zed"]
+git = "https://github.com/zed-industries/zed"
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"

@@ -1,0 +1,34 @@
+[package]
+description = "Support for rust-i18n crate."
+edition = "2021"
+license = "MIT"
+name = "rust-i18n-support"
+readme = "../../README.md"
+repository = "https://github.com/longbridge/rust-i18n"
+version = "4.2.1"
+
+[features]
+codegen = [
+    "dep:serde",
+    "dep:serde_json",
+    "dep:serde-saphyr",
+    "dep:toml",
+    "dep:globwalk",
+    "dep:normpath",
+    "dep:itertools",
+]
+
+[dependencies]
+arc-swap.workspace = true
+base62.workspace = true
+siphasher.workspace = true
+triomphe.workspace = true
+
+# codegen-only deps
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+serde-saphyr = { workspace = true, optional = true }
+toml = { workspace = true, optional = true }
+globwalk = { workspace = true, optional = true }
+normpath = { workspace = true, optional = true }
+itertools = { workspace = true, optional = true }

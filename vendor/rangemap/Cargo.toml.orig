@@ -1,0 +1,70 @@
+[package]
+name = "rangemap"
+version = "1.8.0"
+authors = ["Jeff Parsons <jeff@parsons.io>"]
+edition = "2018"
+# The version 1 resolver unifies dev-dependency features into the library
+# build, so our unconditional `ordered-float` dev-dependency would enable
+# that crate's `std` feature here even though our users don't get it. Our
+# own builds would then see a different feature set from theirs, which is
+# exactly how `no_std` breakage goes unnoticed.
+#
+# Note that this only affects builds where this crate is the workspace
+# root, i.e. our own local and CI builds. It doesn't change anything for
+# crates that depend on us: they resolve features using whichever resolver
+# their own workspace selects.
+resolver = "2"
+license = "MIT/Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/jeffparsons/rangemap"
+documentation = "https://docs.rs/rangemap"
+homepage = "https://github.com/jeffparsons/rangemap"
+description = """
+Map and set data structures whose keys are stored as ranges.
+
+Contiguous and overlapping ranges that map to the same value are coalesced into a single range.
+"""
+categories = ["data-structures"]
+rust-version = "1.81.0"
+exclude = [
+    ".github/*",
+    "bors.toml",
+    "pre_commit.sh",
+    "README.fuzz.md",
+]
+
+[dependencies]
+quickcheck = { version = "1.0.3", optional = true }
+serde = { version = "1", optional = true, default-features = false }
+ordered-float = { version = "5.3.0", optional = true, default-features = false }
+
+[dev-dependencies]
+permutator = "0.4"
+# Criterion bumps its MSRV in 0.3.6; it is probably reasonable
+# to update rangemap's MSRV, too, but until I actually publish
+# a policy on that I'm going to avoid doing a big bump right now.
+# (Later problem!)
+criterion = "0.7"
+rand = "0.9"
+chrono = "0.4"          # For examples
+rustc_version = "0.4"
+serde_json = "1"
+proptest = "1.4"
+test-strategy = "0.4"
+ordered-float = { version = "5.3.0", features = ["proptest"] }
+
+[features]
+serde1 = ["serde", "ordered-float?/serde"]
+# So we can run doc tests from "README.md".
+nightly = []
+# Enables `RangeMap::new()`, `RangeInclusiveMap::new()`, `RangeSet::new()`,
+# and `RangeInclusiveSet::new()` to be const functions.
+# Requires a nightly compiler because `const_btree_new` is an unstable feature,
+# but is soon to be stabilized: <https://github.com/rust-lang/rust/issues/71835>
+const_fn = []
+quickcheck = ["dep:quickcheck"]
+ordered-float5 = ["dep:ordered-float"]
+
+[[bench]]
+name = "benches"
+harness = false

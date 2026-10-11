@@ -1,0 +1,590 @@
+use std::{cmp::Ordering, io::Write, path::Path, sync::Arc, time::Duration};
+
+use bridge::instance::InstanceContentSummary;
+use gpui::{App, BorrowAppContext, SharedString, Task};
+use rand::RngCore;
+use rustc_hash::FxHashSet;
+use schema::{curseforge::CurseforgeClassId, modrinth::ModrinthProjectType, quickplay::QuickplayPreset};
+use serde::{Deserialize, Serialize};
+
+use crate::{component::named_dropdown::DropdownName, pages::instance::instance_page::InstanceSubpageType, ui::PageType};
+
+struct InterfaceConfigHolder {
+    config: InterfaceConfig,
+    write_task: Option<Task<()>>,
+    path: Arc<Path>,
+}
+
+impl gpui::Global for InterfaceConfigHolder {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InterfaceConfig {
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub language: t::Language,
+
+    // Theme
+    #[serde(default, skip_serializing_if = "schema::skip_if_none", deserialize_with = "schema::try_deserialize")]
+    pub active_theme: Option<SharedString>,
+    #[serde(default, skip_serializing_if = "schema::skip_if_none", deserialize_with = "schema::try_deserialize")]
+    pub font_family: Option<SharedString>,
+    #[serde(default, skip_serializing_if = "schema::skip_if_none", deserialize_with = "schema::try_deserialize")]
+    pub font_size: Option<i32>,
+
+    // Window state
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub main_window_bounds: WindowBounds,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub main_page: PageType,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub page_path: Arc<[PageType]>,
+
+    // Sidebar options
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub sidebar_width: f32,
+    #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
+    pub show_sidebar_icons: bool,
+    #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
+    pub show_quickplay_page: bool,
+
+    // Instance management
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub quick_delete_mods: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub quick_delete_instance: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub preferred_add_content_source: PreferredAddContentSource,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_mods_sort_key: InstanceContentSortKey,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_mods_sort_enabled_first: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_resourcepacks_sort_key: InstanceContentSortKey,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_resourcepacks_sort_enabled_first: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_shaders_sort_key: InstanceContentSortKey,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_shaders_sort_enabled_first: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub show_snapshots_in_create_instance: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instances_view_mode: InstancesViewMode,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_group_order: Vec<Arc<str>>,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_groups_closed: FxHashSet<SharedString>,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub instance_subpage: InstanceSubpageType,
+
+    // Content
+    #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
+    pub content_install_latest: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub content_filter_version: bool,
+    #[serde(default = "default_modrinth_project_type", deserialize_with = "schema::try_deserialize")]
+    pub modrinth_page_project_type: ModrinthProjectType,
+    #[serde(default = "default_curseforge_class_id", deserialize_with = "schema::try_deserialize")]
+    pub curseforge_page_class_id: CurseforgeClassId,
+
+    // Window options
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub hide_main_window_on_launch: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub live_game_output_display: LiveGameOutputDisplay,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub quit_on_main_closed: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub use_os_titlebar: bool,
+
+    // Privacy options
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub hide_usernames: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub hide_skins: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub hide_server_addresses: bool,
+
+    // Skins page
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub collapse_capes_in_skins_page: bool,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub skin_list_sort_desc: bool,
+    #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
+    pub skin_list_show_3d: bool,
+    #[serde(default = "default_zoom", deserialize_with = "schema::try_deserialize")]
+    pub player_model_zoom: i32,
+
+    // Quickplay
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub quickplay_preset: QuickplayPreset,
+    #[serde(default, skip_serializing_if = "schema::skip_if_none", deserialize_with = "schema::try_deserialize")]
+    pub quickplay_minecraft_version: Option<SharedString>,
+
+    // Flux appearance
+    /// A background scene id from `crate::backgrounds::SCENES`, or `custom`.
+    #[serde(default = "default_background", deserialize_with = "schema::try_deserialize")]
+    pub background: SharedString,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub background_style: BackgroundStyle,
+    #[serde(default, skip_serializing_if = "schema::skip_if_none", deserialize_with = "schema::try_deserialize")]
+    pub custom_background: Option<Arc<Path>>,
+    #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
+    pub animations: bool,
+    /// Overrides the theme's primary color (0xRRGGBB).
+    #[serde(default, skip_serializing_if = "schema::skip_if_none", deserialize_with = "schema::try_deserialize")]
+    pub accent_color: Option<u32>,
+    /// The instance the Home page's PLAY button launches.
+    #[serde(default, skip_serializing_if = "schema::skip_if_none", deserialize_with = "schema::try_deserialize")]
+    pub home_instance: Option<SharedString>,
+    /// Player names recently previewed on the skins page, newest first.
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub recent_skin_lookups: Vec<SharedString>,
+    /// Minecraft (everything Pandora/Flux does for Minecraft) or the other-games library.
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub library_mode: LibraryMode,
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub games_layout: GamesLayout,
+    /// The layout the Games screen opens in (the sidebar's Home, and at startup).
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub games_default_layout: GamesLayout,
+    /// How many games the Home row shows.
+    #[serde(default = "default_games_row_length", deserialize_with = "schema::try_deserialize")]
+    pub games_row_length: u32,
+    /// How the games are ordered.
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub games_sort: GamesSort,
+    /// The Custom row: game ids in the player's own order (only these show in Custom).
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub custom_order: Vec<String>,
+    /// Width of the game list in the List layout.
+    #[serde(default = "default_games_list_width", deserialize_with = "schema::try_deserialize")]
+    pub games_list_width: f32,
+    /// The List layout shows each game's picture (or just names).
+    #[serde(default = "schema::default_true", deserialize_with = "schema::try_deserialize")]
+    pub games_list_icons: bool,
+    /// Privacy mode: hide friends' names, emails and account names on screen.
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub privacy_mode: bool,
+    /// The chat network the chat panel shows (Flux, PlayStation, Xbox).
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub chat_network: crate::chat::Network,
+    /// The sidebar's width before it was collapsed to icons, to go back to.
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub sidebar_expanded_width: f32,
+    /// The player's own SteamGridDB API key (free), for the best-fitting game art.
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub steamgriddb_key: Option<String>,
+    /// Bumped when Flux learns better art sources, so existing games are looked up again once.
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub art_version: u32,
+    /// The player's own games (Games mode); empty until they add some.
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub games: Vec<crate::games::LibraryGame>,
+    /// Emulators the player pointed at their own copy of: emulator id -> program.
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub emulator_paths: std::collections::BTreeMap<String, std::path::PathBuf>,
+    /// PlayStation controllers act as Xbox controllers (`crate::controller`).
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub controller_emulation: bool,
+    /// Which Xbox control each PlayStation button presses, and stick options.
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub controller_mapping: crate::controller::mapping::Mapping,
+}
+
+/// The order of the games.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GamesSort {
+    #[default]
+    Recent,
+    Name,
+    PlayTime,
+    /// The player's own row (`custom_order`): only the games they added, in their order.
+    Custom,
+}
+
+fn default_games_row_length() -> u32 {
+    16
+}
+
+fn default_games_list_width() -> f32 {
+    300.
+}
+
+/// How the Games home screen lays the library out.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GamesLayout {
+    /// A PlayStation-style row of games, the selected one filling the screen.
+    #[default]
+    Shelf,
+    /// A library grid of game cards.
+    Grid,
+    /// A list of games with the selected game beside it.
+    List,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LibraryMode {
+    #[default]
+    Minecraft,
+    Games,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BackgroundStyle {
+    #[default]
+    Pixel,
+    Smooth,
+}
+
+fn default_background() -> SharedString {
+    SharedString::new_static("skatepark")
+}
+
+pub const DEFAULT_THEME: &'static str = "Default Dark";
+
+#[cfg(windows)]
+pub const DEFAULT_FONT: &'static str = "Inter 24pt 24pt";
+#[cfg(not(windows))]
+pub const DEFAULT_FONT: &'static str = "Inter 24pt";
+
+pub const DEFAULT_FONT_SIZE: i32 = 16;
+
+impl InterfaceConfig {
+    pub fn set_active_theme(&mut self, theme: SharedString) {
+        if theme == DEFAULT_THEME {
+            self.active_theme = None;
+        } else {
+            self.active_theme = Some(theme);
+        }
+    }
+
+    pub fn set_font_family(&mut self, font_family: SharedString) {
+        if font_family == DEFAULT_FONT {
+            self.font_family = None;
+        } else {
+            self.font_family = Some(font_family);
+        }
+    }
+
+    pub fn set_font_size(&mut self, font_size: i32) {
+        if font_size == DEFAULT_FONT_SIZE {
+            self.font_size = None;
+        } else {
+            self.font_size = Some(font_size);
+        }
+    }
+
+    pub fn apply_theme(cx: &mut App, log: bool) {
+        cx.update_global::<InterfaceConfigHolder, _>(|holder, cx| {
+            let registry = gpui_component::ThemeRegistry::global(cx);
+            let theme_config = if let Some(active_theme) = &holder.config.active_theme {
+                if let Some(theme_config) = registry.themes().get(active_theme).cloned() {
+                    theme_config
+                } else {
+                    if log {
+                        log::warn!("Unable to find theme with name {}, using default theme", active_theme);
+                    }
+                    registry.default_dark_theme().clone()
+                }
+            } else if let Some(theme_config) = registry.themes().get(crate::DEFAULT_THEME_NAME).cloned() {
+                theme_config
+            } else {
+                registry.default_dark_theme().clone()
+            };
+
+            let theme = gpui_component::Theme::global_mut(cx);
+
+            theme.apply_config(&theme_config);
+
+            if let Some(accent) = holder.config.accent_color {
+                let accent: gpui::Hsla = gpui::rgb(accent).into();
+                theme.primary = accent;
+                theme.primary_hover = accent.blend(gpui::white().opacity(0.12));
+                theme.primary_active = accent.blend(gpui::black().opacity(0.12));
+                theme.ring = accent;
+                theme.sidebar_primary = accent;
+                theme.progress_bar = accent;
+                theme.slider_bar = accent;
+            }
+
+            theme.font_family = holder.config.font_family.clone().unwrap_or(SharedString::new_static(DEFAULT_FONT));
+            theme.font_size = gpui::px(holder.config.font_size.unwrap_or(DEFAULT_FONT_SIZE).clamp(8, 32) as f32);
+            theme.scrollbar_mode = gpui_component::scroll::ScrollbarMode::Always;
+        });
+        cx.refresh_windows();
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, strum::EnumIter)]
+#[serde(rename_all = "lowercase")]
+pub enum LiveGameOutputDisplay {
+    #[default]
+    TabOnInstancePage,
+    SeparateWindow,
+    Hidden,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, strum::EnumIter)]
+#[serde(rename_all = "lowercase")]
+pub enum InstanceContentSortKey {
+    #[default]
+    Name,
+    ModId,
+    Filename,
+    ModifiedTime,
+    FileSize,
+}
+
+impl InstanceContentSortKey {
+    pub fn name(self) -> DropdownName {
+        match self {
+            InstanceContentSortKey::Name => DropdownName::translated(t::instance::content::sort_key::name),
+            InstanceContentSortKey::ModId => DropdownName::translated(t::instance::content::sort_key::mod_id),
+            InstanceContentSortKey::Filename => DropdownName::translated(t::instance::content::sort_key::filename),
+            InstanceContentSortKey::ModifiedTime => DropdownName::translated(t::instance::content::sort_key::modified_time),
+            InstanceContentSortKey::FileSize => DropdownName::translated(t::instance::content::sort_key::filesize),
+        }
+    }
+
+    pub fn compare(self, a: &InstanceContentSummary, b: &InstanceContentSummary) -> Ordering {
+        match self {
+            InstanceContentSortKey::Name => {
+                let name_a = a.content_summary.name.as_deref().or(a.content_summary.id.as_deref()).unwrap_or(&*a.filename);
+                let name_b = b.content_summary.name.as_deref().or(b.content_summary.id.as_deref()).unwrap_or(&*b.filename);
+                lexical_sort::natural_lexical_cmp(name_a, name_b)
+            },
+            InstanceContentSortKey::ModId => {
+                let name_a = a.content_summary.id.as_deref().or(a.content_summary.name.as_deref()).unwrap_or(&*a.filename);
+                let name_b = b.content_summary.id.as_deref().or(b.content_summary.name.as_deref()).unwrap_or(&*b.filename);
+                lexical_sort::natural_lexical_cmp(name_a, name_b)
+            },
+            InstanceContentSortKey::Filename => {
+                let name_a = &*a.filename;
+                let name_b = &*b.filename;
+                lexical_sort::natural_lexical_cmp(name_a, name_b)
+            },
+            InstanceContentSortKey::ModifiedTime => {
+                a.modified_unix_ms.cmp(&b.modified_unix_ms).reverse()
+            },
+            InstanceContentSortKey::FileSize => {
+                a.content_summary.filesize.unwrap_or(0).cmp(&b.content_summary.filesize.unwrap_or(0)).reverse()
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum PreferredAddContentSource {
+    #[default]
+    Modrinth,
+    CurseForge,
+    File,
+}
+
+fn default_zoom() -> i32 {
+    100
+}
+
+fn default_modrinth_project_type() -> ModrinthProjectType {
+    ModrinthProjectType::Mod
+}
+
+fn default_curseforge_class_id() -> CurseforgeClassId {
+    CurseforgeClassId::Mod
+}
+
+impl Default for InterfaceConfig {
+    fn default() -> Self {
+        Self {
+            language: Default::default(),
+            active_theme: Default::default(),
+            font_family: None,
+            font_size: None,
+            main_window_bounds: Default::default(),
+            main_page: Default::default(),
+            page_path: Default::default(),
+            sidebar_width: Default::default(),
+            show_sidebar_icons: true,
+            show_quickplay_page: true,
+            quick_delete_mods: Default::default(),
+            quick_delete_instance: Default::default(),
+            preferred_add_content_source: Default::default(),
+            instance_mods_sort_key: Default::default(),
+            instance_mods_sort_enabled_first: Default::default(),
+            instance_resourcepacks_sort_key: Default::default(),
+            instance_resourcepacks_sort_enabled_first: Default::default(),
+            instance_shaders_sort_key: Default::default(),
+            instance_shaders_sort_enabled_first: Default::default(),
+            content_install_latest: true,
+            background: default_background(),
+            background_style: BackgroundStyle::default(),
+            custom_background: None,
+            animations: true,
+            accent_color: None,
+            home_instance: None,
+            recent_skin_lookups: Vec::new(),
+            library_mode: LibraryMode::default(),
+            games_layout: GamesLayout::default(),
+            games_default_layout: GamesLayout::default(),
+            games_row_length: default_games_row_length(),
+            games_sort: GamesSort::default(),
+            custom_order: Vec::new(),
+            games_list_width: default_games_list_width(),
+            games_list_icons: true,
+            sidebar_expanded_width: 0.,
+            chat_network: Default::default(),
+            privacy_mode: false,
+            steamgriddb_key: None,
+            art_version: 0,
+            games: Vec::new(),
+            emulator_paths: Default::default(),
+            controller_emulation: false,
+            controller_mapping: Default::default(),
+            content_filter_version: Default::default(),
+            modrinth_page_project_type: default_modrinth_project_type(),
+            curseforge_page_class_id: default_curseforge_class_id(),
+            hide_main_window_on_launch: false,
+            live_game_output_display: LiveGameOutputDisplay::default(),
+            quit_on_main_closed: false,
+            use_os_titlebar: false,
+            hide_server_addresses: false,
+            hide_usernames: false,
+            hide_skins: false,
+            show_snapshots_in_create_instance: Default::default(),
+            instances_view_mode: Default::default(),
+            instance_group_order: Vec::new(),
+            instance_groups_closed: Default::default(),
+            instance_subpage: Default::default(),
+            collapse_capes_in_skins_page: false,
+            skin_list_sort_desc: false,
+            skin_list_show_3d: true,
+            player_model_zoom: default_zoom(),
+            quickplay_preset: QuickplayPreset::Vanilla,
+            quickplay_minecraft_version: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowBounds {
+    #[default]
+    Inherit,
+    Windowed {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+    },
+    Maximized {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+    },
+    Fullscreen {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, strum::EnumIter)]
+#[serde(rename_all = "lowercase")]
+pub enum InstancesViewMode {
+    #[default]
+    Cards,
+    List,
+}
+
+impl InstancesViewMode {
+    pub fn name(self) -> DropdownName {
+        match self {
+            InstancesViewMode::Cards => DropdownName::translated(t::common::layout::cards),
+            InstancesViewMode::List => DropdownName::translated(t::common::layout::list),
+        }
+    }
+}
+
+impl InterfaceConfig {
+    pub fn init(cx: &mut App, path: Arc<Path>) {
+        cx.set_global(InterfaceConfigHolder {
+            config: try_read_json(&path),
+            write_task: None,
+            path,
+        });
+    }
+
+    pub fn get(cx: &App) -> &Self {
+        &cx.global::<InterfaceConfigHolder>().config
+    }
+
+    pub fn force_save(cx: &mut App) {
+        cx.global_mut::<InterfaceConfigHolder>().write_to_disk();
+    }
+
+    pub fn get_mut(cx: &mut App) -> &mut Self {
+        if cx.global::<InterfaceConfigHolder>().write_task.is_none() {
+            let task = cx.spawn(async |app| {
+                app.background_executor().timer(Duration::from_secs(5)).await;
+                _ = app.update_global::<InterfaceConfigHolder, _>(|holder, _| {
+                    holder.write_to_disk();
+                });
+            });
+
+            let holder = cx.global_mut::<InterfaceConfigHolder>();
+            holder.write_task = Some(task);
+            &mut holder.config
+        } else {
+            &mut cx.global_mut::<InterfaceConfigHolder>().config
+        }
+    }
+}
+
+impl InterfaceConfigHolder {
+    fn write_to_disk(&mut self) {
+        self.write_task = None;
+        let Ok(bytes) = serde_json::to_vec(&self.config) else {
+            return;
+        };
+        _ = write_safe(&self.path, &bytes);
+    }
+}
+
+pub(crate) fn try_read_json<T: std::fmt::Debug + Default + for <'de> Deserialize<'de>>(path: &Path) -> T {
+    let Ok(data) = std::fs::read(path) else {
+        return T::default();
+    };
+    serde_json::from_slice(&data).unwrap_or_default()
+}
+
+pub(crate) fn write_safe(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let mut temp = path.to_path_buf();
+    temp.add_extension(format!("{}", rand::thread_rng().next_u32()));
+    temp.add_extension("new");
+
+    let mut temp_file = std::fs::File::create(&temp)?;
+
+    temp_file.write_all(content)?;
+    temp_file.flush()?;
+    temp_file.sync_all()?;
+
+    drop(temp_file);
+
+    if let Err(err) = std::fs::rename(&temp, path) {
+        _ = std::fs::remove_file(&temp);
+        return Err(err);
+    }
+
+    Ok(())
+}

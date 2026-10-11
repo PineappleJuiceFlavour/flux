@@ -1,0 +1,13 @@
+[package]
+name = "nbt"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+slab.workspace = true
+anyhow.workspace = true
+byteorder.workspace = true
+bytes.workspace = true
+paste.workspace = true
+num.workspace = true
+cesu8.workspace = true

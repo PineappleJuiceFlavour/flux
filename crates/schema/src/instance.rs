@@ -1,0 +1,350 @@
+use std::{path::Path, sync::Arc};
+
+use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
+use ustr::Ustr;
+use uuid::Uuid;
+
+use crate::{curseforge::CurseforgeReleaseType, fabric_loader_manifest::FabricLoaderManifest, forge::{ForgeMavenManifest, NeoforgeMavenManifest, VersionFragment}, loader::Loader, modrinth::ModrinthVersionType};
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct InstanceConfiguration {
+    pub minecraft_version: Ustr,
+    pub loader: Loader,
+    #[serde(default, skip_serializing_if = "crate::skip_if_none")]
+    pub preferred_loader_version: Option<Ustr>,
+    #[serde(default, deserialize_with = "crate::try_deserialize")]
+    pub update_channel: UpdateChannel,
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "crate::skip_if_none")]
+    pub preferred_account: Option<Uuid>,
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "is_default_memory_configuration")]
+    pub memory: Option<InstanceMemoryConfiguration>,
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "is_default_wrapper_command_configuration")]
+    pub wrapper_command: Option<InstanceWrapperCommandConfiguration>,
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "is_default_jvm_flags_configuration")]
+    pub jvm_flags: Option<InstanceJvmFlagsConfiguration>,
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "is_default_jvm_binary_configuration")]
+    pub jvm_binary: Option<InstanceJvmBinaryConfiguration>,
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "is_default_linux_wrapper_configuration")]
+    pub linux_wrapper: Option<InstanceLinuxWrapperConfiguration>,
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "is_default_system_libraries_configuration")]
+    pub system_libraries: Option<InstanceSystemLibrariesConfiguration>,
+    #[serde(default, deserialize_with = "crate::try_deserialize", skip_serializing_if = "crate::skip_if_none")]
+    pub instance_fallback_icon: Option<Ustr>,
+    #[serde(default, deserialize_with = "crate::try_deserialize")]
+    pub disable_file_syncing: bool,
+    #[serde(default, deserialize_with = "crate::try_deserialize")]
+    pub show_shader_tab: bool,
+    #[serde(default, deserialize_with = "crate::try_deserialize")]
+    pub sandbox: bool, // Default sandbox to false when loading old configuration json
+    #[serde(default, skip_serializing_if = "crate::skip_if_none", deserialize_with = "crate::try_deserialize")]
+    pub group: Option<Arc<str>>,
+}
+
+impl InstanceConfiguration {
+    pub fn new(minecraft_version: Ustr, loader: Loader) -> Self {
+        Self {
+            minecraft_version,
+            loader,
+            preferred_loader_version: None,
+            update_channel: UpdateChannel::default(),
+            preferred_account: None,
+            memory: None,
+            wrapper_command: None,
+            jvm_flags: None,
+            jvm_binary: None,
+            linux_wrapper: None,
+            system_libraries: None,
+            instance_fallback_icon: None,
+            disable_file_syncing: false,
+            show_shader_tab: false,
+            sandbox: false,  // todo: for now, off by default. In the future, turn this on by default
+            group: None,
+        }
+    }
+}
+
+impl InstanceConfiguration {
+    pub fn determine_fabric_loader_version(&self, manifest: &FabricLoaderManifest) -> Option<Ustr> {
+        if let Some(preferred_version) = self.preferred_loader_version {
+            return Some(preferred_version);
+        }
+
+        let mut latest_loader_version = manifest.0.iter().find(|v| v.stable);
+        if latest_loader_version.is_none() {
+            latest_loader_version = manifest.0.first();
+        }
+        Some(latest_loader_version?.version)
+    }
+
+    pub fn determine_neoforge_loader_version(&self, manifest: &NeoforgeMavenManifest) -> Option<Ustr> {
+        if let Some(preferred_loader_version) = self.preferred_loader_version {
+            return Some(preferred_loader_version);
+        }
+
+        let mut minecraft_version_parts = VersionFragment::string_to_parts(self.minecraft_version.as_str());
+
+        // 1.21.5 -> 21.5
+        // 25w14craftmine -> 0.25w14craftmine
+        // 1.21 -> 21.0
+        // 26.1 -> 26.1.0
+        if minecraft_version_parts[0] == VersionFragment::String("25w14craftmine".into()) {
+            minecraft_version_parts.insert(0, VersionFragment::Number(0))
+        } else {
+            if minecraft_version_parts.len() < 3 {
+                minecraft_version_parts.push(VersionFragment::Number(0))
+            }
+            if minecraft_version_parts[0] == VersionFragment::Number(1) {
+                minecraft_version_parts.remove(0);
+            }
+        }
+
+        let mut latest_loader_version = None;
+        let mut latest_loader_version_parts = Vec::new();
+        for version in manifest.0.iter() {
+            let parts = VersionFragment::string_to_parts(version);
+
+            if parts.starts_with(&minecraft_version_parts) {
+                if parts > latest_loader_version_parts {
+                    latest_loader_version_parts = parts;
+                    latest_loader_version = Some(version.clone());
+                }
+            }
+        }
+
+        latest_loader_version
+    }
+
+    pub fn determine_forge_loader_version(&self, manifest: &ForgeMavenManifest) -> Option<Ustr> {
+        if let Some(preferred_loader_version) = self.preferred_loader_version {
+            return Some(preferred_loader_version);
+        }
+
+        let mut latest_loader_version = None;
+        let mut latest_loader_version_parts = Vec::new();
+
+        for loader_version in &manifest.0 {
+            let Some((loader_minecraft_version, _)) = loader_version.split_once('-') else {
+                continue;
+            };
+            if loader_minecraft_version != self.minecraft_version {
+                continue;
+            }
+
+            let parts = VersionFragment::string_to_parts(loader_version);
+            if parts > latest_loader_version_parts {
+                latest_loader_version_parts = parts;
+                latest_loader_version = Some(loader_version.clone());
+            }
+        }
+
+        latest_loader_version
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateChannel {
+    #[default]
+    Release,
+    Beta,
+    Alpha,
+}
+
+impl UpdateChannel {
+    pub fn modrinth_version_types_with_fallback(self) -> &'static [&'static [ModrinthVersionType]] {
+        match self {
+            Self::Release => &[&[ModrinthVersionType::Release], &[ModrinthVersionType::Beta], &[ModrinthVersionType::Alpha]],
+            Self::Beta => &[&[ModrinthVersionType::Release, ModrinthVersionType::Beta], &[ModrinthVersionType::Alpha]],
+            Self::Alpha => &[&[ModrinthVersionType::Release, ModrinthVersionType::Beta, ModrinthVersionType::Alpha]],
+        }
+    }
+
+    pub fn curseforge_release_types_with_fallback(self) -> &'static [&'static [CurseforgeReleaseType]] {
+        match self {
+            Self::Release => &[&[CurseforgeReleaseType::Release], &[CurseforgeReleaseType::Beta], &[CurseforgeReleaseType::Alpha]],
+            Self::Beta => &[&[CurseforgeReleaseType::Release, CurseforgeReleaseType::Beta], &[CurseforgeReleaseType::Alpha]],
+            Self::Alpha => &[&[CurseforgeReleaseType::Release, CurseforgeReleaseType::Beta, CurseforgeReleaseType::Alpha]],
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+pub struct InstanceMemoryConfiguration {
+    pub enabled: bool,
+    pub min: u32,
+    pub max: u32,
+}
+
+impl InstanceMemoryConfiguration {
+    pub const DEFAULT_MIN: u32 = 512;
+    pub const DEFAULT_MAX: u32 = 4096;
+}
+
+impl Default for InstanceMemoryConfiguration {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            min: Self::DEFAULT_MIN,
+            max: Self::DEFAULT_MAX
+        }
+    }
+}
+
+pub fn is_default_memory_configuration(config: &Option<InstanceMemoryConfiguration>) -> bool {
+    if let Some(config) = config {
+        !config.enabled
+            && config.min == InstanceMemoryConfiguration::DEFAULT_MIN
+            && config.max == InstanceMemoryConfiguration::DEFAULT_MAX
+    } else {
+        true
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct InstanceWrapperCommandConfiguration {
+    pub enabled: bool,
+    pub flags: Arc<str>,
+}
+
+fn is_default_wrapper_command_configuration(config: &Option<InstanceWrapperCommandConfiguration>) -> bool {
+    if let Some(config) = config {
+        !config.enabled && config.flags.trim_ascii().is_empty()
+    } else {
+        true
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct InstanceJvmFlagsConfiguration {
+    pub enabled: bool,
+    pub flags: Arc<str>,
+}
+
+pub fn is_default_jvm_flags_configuration(config: &Option<InstanceJvmFlagsConfiguration>) -> bool {
+    if let Some(config) = config {
+        !config.enabled && config.flags.trim_ascii().is_empty()
+    } else {
+        true
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct InstanceJvmBinaryConfiguration {
+    pub enabled: bool,
+    pub path: Option<Arc<Path>>,
+}
+
+pub fn is_default_jvm_binary_configuration(config: &Option<InstanceJvmBinaryConfiguration>) -> bool {
+    if let Some(config) = config {
+        !config.enabled && config.path.is_none()
+    } else {
+        true
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub struct InstanceLinuxWrapperConfiguration {
+    #[serde(default, deserialize_with = "crate::try_deserialize")]
+    pub use_mangohud: bool,
+    #[serde(default, deserialize_with = "crate::try_deserialize")]
+    pub use_gamemode: bool,
+    #[serde(default = "crate::default_true", deserialize_with = "crate::try_deserialize")]
+    pub use_discrete_gpu: bool,
+    #[serde(default, deserialize_with = "crate::try_deserialize")]
+    pub disable_gl_threaded_optimizations: bool,
+}
+
+impl Default for InstanceLinuxWrapperConfiguration {
+    fn default() -> Self {
+        Self {
+            use_mangohud: false,
+            use_gamemode: false,
+            use_discrete_gpu: true,
+            disable_gl_threaded_optimizations: false
+        }
+    }
+}
+
+fn is_default_linux_wrapper_configuration(config: &Option<InstanceLinuxWrapperConfiguration>) -> bool {
+    if let Some(config) = config {
+        !config.use_mangohud && !config.use_gamemode && config.use_discrete_gpu && !config.disable_gl_threaded_optimizations
+    } else {
+        true
+    }
+}
+
+
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
+pub struct InstanceSystemLibrariesConfiguration {
+    pub override_glfw: bool,
+    pub glfw: LwjglLibraryPath,
+    pub override_openal: bool,
+    pub openal: LwjglLibraryPath,
+}
+
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
+pub enum LwjglLibraryPath {
+    #[default]
+    Auto,
+    AutoPreferred(Arc<Path>),
+    Explicit(Arc<Path>),
+}
+
+fn is_default_system_libraries_configuration(config: &Option<InstanceSystemLibrariesConfiguration>) -> bool {
+    if let Some(config) = config {
+        matches!(config.glfw, LwjglLibraryPath::Auto) && matches!(config.openal, LwjglLibraryPath::Auto)
+    } else {
+        true
+    }
+}
+
+impl LwjglLibraryPath {
+    pub fn get_or_auto(self, auto: &Option<Arc<Path>>) -> Option<Arc<Path>> {
+        match self {
+            LwjglLibraryPath::Auto => auto.clone(),
+            LwjglLibraryPath::AutoPreferred(preferred) => {
+                if preferred.exists() {
+                    Some(preferred)
+                } else {
+                    auto.clone()
+                }
+            },
+            LwjglLibraryPath::Explicit(path) => {
+                Some(path)
+            },
+        }
+    }
+}
+
+pub static AUTO_LIBRARY_PATH_GLFW: Lazy<Option<Arc<Path>>> = Lazy::new(|| get_shared_library_path_for_name("glfw"));
+pub static AUTO_LIBRARY_PATH_OPENAL: Lazy<Option<Arc<Path>>> = Lazy::new(|| get_shared_library_path_for_name("openal"));
+
+#[cfg(not(unix))]
+fn get_shared_library_path_for_name(name: &str) -> Option<Arc<Path>> {
+    None
+}
+
+#[cfg(unix)]
+fn get_shared_library_path_for_name(name: &str) -> Option<Arc<Path>> {
+    let filename = format!("{}{}{}", std::env::consts::DLL_PREFIX, name, std::env::consts::DLL_SUFFIX);
+
+    let search_paths = &[
+        "/lib/",
+        "/lib64/",
+        "/usr/lib/",
+        "/usr/lib64/",
+        "/usr/local/lib/",
+        #[cfg(target_os = "macos")]
+        "/opt/homebrew/lib/"
+    ];
+
+    for search_path in search_paths {
+        let path = Path::new(search_path).join(&filename);
+        if path.exists() {
+            return Some(path.into());
+        }
+    }
+
+    None
+}

@@ -48,17 +48,17 @@ fn accent_shade(lightness: f32) -> Option<Hsla> {
 
 /// Light accent: titles, links and highlights (Flux's sky blue by default).
 pub fn sky() -> Hsla {
-    accent_shade(0.18).unwrap_or_else(|| crate::pages::home_page::sky().into())
+    accent_shade(0.18).unwrap_or_else(|| rgb(FLUX_SKY).into())
 }
 
 /// The accent itself (Flux's blue by default).
 pub fn blue() -> Hsla {
-    accent_shade(0.0).unwrap_or_else(|| crate::pages::home_page::blue().into())
+    accent_shade(0.0).unwrap_or_else(|| rgb(FLUX_BLUE).into())
 }
 
 /// Dark accent: the far end of gradients like PLAY (Flux's violet by default).
 pub fn violet() -> Hsla {
-    accent_shade(-0.16).unwrap_or_else(|| crate::pages::home_page::violet().into())
+    accent_shade(-0.16).unwrap_or_else(|| rgb(FLUX_VIOLET).into())
 }
 
 /// Darkest accent: the PLAY button's bottom edge.

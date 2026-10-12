@@ -6,6 +6,9 @@
 use std::{cell::Cell, path::PathBuf, rc::Rc, time::Duration};
 
 use gpui::{prelude::*, *};
+
+/// The Home row bar's side margins (match the row's own padding).
+const ROW_BAR_INSET: Pixels = px(24.);
 use gpui_component::{
     ActiveTheme, Icon, Sizable, button::{Button, ButtonVariants}, h_flex, input::{Input, InputEvent, InputState},
     menu::{ContextMenuExt, PopupMenu, PopupMenuItem}, scroll::ScrollableElement, v_flex,
@@ -197,6 +200,8 @@ pub struct GamesHomePage {
     message: Option<(SharedString, bool)>,
     focus: FocusHandle,
     tiles: ScrollHandle,
+    /// Dragging the faint bar under the Home row.
+    bar_drag: bool,
     /// The game last opened from the Library (kept in the Home row).
     opened: Option<String>,
     /// An extra tile (All games / Add games) selected in the Home row instead of a game.
@@ -244,6 +249,7 @@ impl GamesHomePage {
             message: None,
             focus: cx.focus_handle(),
             tiles: ScrollHandle::new(),
+            bar_drag: false,
             opened: None,
             extra: None,
             grid_scroll: ScrollHandle::new(),
@@ -1006,6 +1012,62 @@ impl GamesHomePage {
             .into_any_element()
     }
 
+    /// The Home row's faint bar: where you are in the row. Click or drag it to move along the
+    /// row (the mouse wheel over the row scrolls it too).
+    fn row_bar(&self, cx: &mut Context<Self>) -> AnyElement {
+        let view = self.tiles.bounds();
+        let max = self.tiles.max_offset().x;
+        let track = view.size.width - ROW_BAR_INSET * 2.;
+        if max <= px(1.) || track <= px(0.) {
+            return div().h(px(14.)).into_any_element();
+        }
+        let content = view.size.width + max;
+        let scrolled = -self.tiles.offset().x;
+        let thumb_w = (track * (view.size.width / content)).max(px(28.));
+        let thumb_left = ((track - thumb_w) * (scrolled / max).clamp(0., 1.)).max(px(0.));
+        let dragging = self.bar_drag;
+        div().px(ROW_BAR_INSET).py_1().child(
+            div().id("row-bar").relative().w_full().h(px(6.)).rounded_full().cursor_pointer()
+                .bg(gpui::white().opacity(0.05))
+                .hover(|s| s.bg(gpui::white().opacity(0.09)))
+                .child(div().absolute().top_0().left(thumb_left).w(thumb_w).h_full().rounded_full()
+                    .bg(gpui::white().opacity(if dragging { 0.32 } else { 0.18 })))
+                .on_mouse_down(MouseButton::Left, cx.listener(|page, e: &MouseDownEvent, _, cx| {
+                    page.bar_drag = true;
+                    page.bar_seek(e.position.x);
+                    cx.notify();
+                }))
+                .on_mouse_move(cx.listener(|page, e: &MouseMoveEvent, _, cx| {
+                    if page.bar_drag && e.pressed_button == Some(MouseButton::Left) {
+                        page.bar_seek(e.position.x);
+                        cx.notify();
+                    }
+                }))
+                .on_mouse_up(MouseButton::Left, cx.listener(|page, _, _, cx| {
+                    page.bar_drag = false;
+                    cx.notify();
+                }))
+                .on_mouse_up_out(MouseButton::Left, cx.listener(|page, _, _, cx| {
+                    page.bar_drag = false;
+                    cx.notify();
+                })),
+        ).into_any_element()
+    }
+
+    /// Centre the row on the point of the bar under the mouse.
+    fn bar_seek(&self, x: Pixels) {
+        let view = self.tiles.bounds();
+        let max = self.tiles.max_offset().x;
+        let track = view.size.width - ROW_BAR_INSET * 2.;
+        if max <= px(1.) || track <= px(0.) {
+            return;
+        }
+        let at = ((x - view.left() - ROW_BAR_INSET) / track).clamp(0., 1.);
+        let target = ((view.size.width + max) * at - view.size.width / 2.).clamp(px(0.), max);
+        let offset = self.tiles.offset();
+        self.tiles.set_offset(point(-target, offset.y));
+    }
+
     /// What to show when no game matches.
     fn empty_message(&self, cx: &App) -> &'static str {
         if InterfaceConfig::get(cx).games_sort == GamesSort::Custom && self.filter.active() == 0 {
@@ -1021,7 +1083,10 @@ impl GamesHomePage {
         let sky: Hsla = crate::pages::home_page::sky().into();
         let custom = InterfaceConfig::get(cx).games_sort == GamesSort::Custom;
         let more = self.matching_count(cx).saturating_sub(list.len());
-        let mut tiles = h_flex().id("shelf-tiles").px_6().py_3().gap_3().items_start().overflow_x_scroll().track_scroll(&self.tiles);
+        let mut tiles = h_flex().id("shelf-tiles").px_6().py_3().gap_3().items_start().overflow_x_scroll().track_scroll(&self.tiles)
+            // The wheel over the row moves along the row (the row's own scroll runs first), and
+            // stops there, so the page only scrolls down to the description from below the row.
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation());
         let extra = self.extra;
         let ring = vec![
             BoxShadow { color: gpui::white().into(), offset: point(px(0.), px(0.)), blur_radius: px(0.), spread_radius: px(3.), inset: false },
@@ -1174,7 +1239,8 @@ impl GamesHomePage {
             .child(v_flex().size_full()
                 .child(v_flex().min_h(first_screen).flex_shrink_0()
                     .child(tiles)
-                    .child(v_flex().px_8().pt_6().gap_6().child(hero).child(summary)))
+                    .child(self.row_bar(cx))
+                    .child(v_flex().px_8().pt_4().gap_6().child(hero).child(summary)))
                 .child(div().px_8().pb_8().child(details))
                 .overflow_y_scrollbar())
             .into_any_element()

@@ -293,6 +293,7 @@ impl BackendState {
 
     pub async fn load_all_instances(&self) {
         log::info!("Loading all instances");
+        crate::launcher_import::curseforge::restore_curseforge_icons(self).await;
 
         let mut paths_with_time = Vec::new();
 

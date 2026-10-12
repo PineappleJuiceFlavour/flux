@@ -482,6 +482,7 @@ impl GamePage {
             let current = crate::xenia_config::current(setting);
             // A segmented control: the current choice filled with the accent color.
             let group = h_flex()
+                .flex_shrink_0()
                 .p_0p5()
                 .gap_0p5()
                 .rounded_lg()
@@ -496,6 +497,7 @@ impl GamePage {
                         .py_1()
                         .rounded_md()
                         .text_sm()
+                        .whitespace_nowrap()
                         .cursor_pointer()
                         .when(selected, |this| this.bg(primary).text_color(cx.theme().primary_foreground).font_weight(FontWeight::SEMIBOLD))
                         .when(!selected, |this| this.text_color(muted).hover(|this| this.bg(secondary_hover).text_color(cx.theme().foreground)))
@@ -509,8 +511,9 @@ impl GamePage {
                             cx.notify();
                         }))
                 }));
+            // The text takes what's left and wraps, so the buttons always stay inside the card.
             h_flex().gap_4().py_2().border_b_1().border_color(border.opacity(0.5))
-                .child(v_flex().flex_1().gap_0p5()
+                .child(v_flex().flex_1().min_w_0().gap_0p5()
                     .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(setting.label))
                     .child(div().text_xs().text_color(muted).child(setting.help)))
                 .child(group)

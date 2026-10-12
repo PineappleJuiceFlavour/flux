@@ -391,12 +391,14 @@ impl LauncherUI {
         }
 
         // Flux always opens on Home (the game row), whatever page was open last time.
-        // FLUX_START_PAGE=instances|skins|quickplay opens that page instead (for screenshots and testing).
+        // FLUX_START_PAGE=instances|skins|quickplay|game:<id> opens that page instead (for screenshots
+        // and testing; FLUX_GAME_TAB picks a game page's tab).
         let _ = (main_page, original_page_path);
         let main_page = match std::env::var("FLUX_START_PAGE").as_deref() {
             Ok("instances") => PageType::Instances,
             Ok("skins") => PageType::Skins,
             Ok("quickplay") => PageType::Quickplay,
+            Ok(page) if page.starts_with("game:") => PageType::Game { id: page["game:".len()..].to_string().into() },
             _ => PageType::GamesHome,
         };
         let original_page_path: Arc<[PageType]> = [].into();

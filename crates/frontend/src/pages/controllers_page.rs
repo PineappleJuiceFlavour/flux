@@ -87,7 +87,7 @@ impl Render for ControllersPage {
 
         let main = card("PLAYSTATION AS XBOX")
             .child(h_flex().gap_4().items_center()
-                .child(v_flex().flex_1().gap_0p5()
+                .child(v_flex().flex_1().min_w_0().gap_0p5()
                     .child(div().font_weight(FontWeight::SEMIBOLD).child("Make PlayStation controllers act like Xbox controllers"))
                     .child(div().text_xs().text_color(muted).child(
                         "PS5 (DualSense, DualSense Edge) and PS4 controllers, over USB or Bluetooth. Games see an Xbox 360 controller; \
@@ -108,7 +108,7 @@ impl Render for ControllersPage {
                 (None, _) => "battery unknown".into(),
             };
             h_flex().gap_4().items_center().p_3().rounded_lg().bg(cx.theme().background)
-                .child(v_flex().flex_1().gap_0p5()
+                .child(v_flex().flex_1().min_w_0().gap_0p5()
                     .child(div().font_weight(FontWeight::SEMIBOLD).child(pad.name))
                     .child(div().text_xs().text_color(muted).child(format!("{} · {battery}", if pad.bluetooth { "Bluetooth" } else { "USB" }))))
                 .child(div().text_sm().text_color(if pad.xbox_slot.is_some() { green } else { muted }).child(match pad.xbox_slot {

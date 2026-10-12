@@ -436,11 +436,18 @@
       var tile = el("div", "demo-tile");
       tile.setAttribute("role", "option");
       tile.title = g.name;
+      // Square tile like Flux's: the game's key art filling the square, its logo on top.
       var img = el("img");
-      img.src = g.cover || g.hero || "";
+      img.src = (g.logo && g.hero) || g.cover || g.hero || "";
       img.alt = g.name;
-      img.loading = "eager";
       tile.appendChild(img);
+      if (g.logo && g.hero) {
+        var logo = el("img", "demo-tile-logo");
+        logo.src = g.logo;
+        logo.alt = "";
+        logo.onerror = function () { logo.remove(); img.src = g.cover || g.hero; };
+        tile.appendChild(logo);
+      }
       tile.addEventListener("click", function () { select(i); });
       row.appendChild(tile);
     });

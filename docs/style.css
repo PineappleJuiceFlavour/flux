@@ -321,10 +321,10 @@ footer .spacer { flex: 1; }
 }
 .give-btn:hover { text-decoration: none; filter: brightness(1.08); transform: translateY(-1px); }
 .coffee-btn { background: var(--coffee); color: #1b1600; }
-.copy-btn { margin-top: 4px; background: linear-gradient(90deg, #9945ff, #14f195); color: #0a0612; align-self: flex-start; }
-.wallet { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; padding: 14px; border-radius: 12px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line); }
+.copy-btn { margin-top: 4px; background: linear-gradient(90deg, #9945ff, #14f195); color: #0a0612; }
+.wallet { display: flex; flex-direction: column; gap: 14px; align-items: center; padding: 14px; border-radius: 12px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line); }
 .qr { width: 148px; height: 148px; border-radius: 10px; background: #fff; padding: 6px; flex-shrink: 0; image-rendering: pixelated; }
-.wallet-info { display: grid; gap: 6px; min-width: 0; flex: 1 1 160px; }
+.wallet-info { display: grid; gap: 6px; min-width: 0; width: 100%; }
 .wallet-info .k { font-size: 12px; color: rgba(255, 255, 255, 0.55); }
 .addr { display: block; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; user-select: all; }
 .warn { font-size: 13px !important; color: var(--muted) !important; }

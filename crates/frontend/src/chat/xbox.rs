@@ -21,6 +21,8 @@ struct Pass {
 }
 
 static PASS: Mutex<Option<Pass>> = Mutex::const_new(None);
+/// Friend's Xbox user id -> your one-to-one conversation with them.
+static CONVERSATIONS: std::sync::LazyLock<Mutex<std::collections::HashMap<String, String>>> = std::sync::LazyLock::new(Default::default);
 static POLLING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 async fn fetch_pass() -> Result<Pass, String> {
@@ -113,6 +115,11 @@ pub fn disconnect() {
     update(NET, |s| *s = Default::default());
 }
 
+/// An id that may come as text or as a number.
+fn id_of(v: &Value) -> Option<String> {
+    v.as_str().map(String::from).or_else(|| v.as_u64().map(|n| n.to_string()))
+}
+
 fn person(p: &Value) -> Option<Friend> {
     let id = p["xuid"].as_str()?.to_string();
     let name = p["gamertag"].as_str().or(p["displayName"].as_str()).unwrap_or("Player").to_string();
@@ -170,7 +177,7 @@ fn parse_messages(json: &Value, me: &str) -> Vec<Message> {
         if parts.is_empty() {
             return None;
         }
-        let sender = m["sender"].as_str().map(String::from).or_else(|| m["sender"]["xuid"].as_str().map(String::from)).unwrap_or_default();
+        let sender = id_of(&m["sender"]).or_else(|| id_of(&m["sender"]["xuid"])).unwrap_or_default();
         let time = ["timestamp", "sent", "messageTime"].iter().find_map(|k| m[*k].as_str())
             .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).map(|t| t.timestamp_millis()).unwrap_or(0);
         Some(Message { mine: sender == me, sender, text: parts.join(" "), time })
@@ -180,17 +187,25 @@ fn parse_messages(json: &Value, me: &str) -> Vec<Message> {
 pub async fn load_messages(friend: String) {
     let result: Result<(), String> = async {
         let (_, me) = pass().await?;
-        // Find your one-to-one conversation with them in the inbox (or message requests), then
-        // load it by its id.
-        let mut conversation = None;
+        // Your one-to-one conversation with them: known from sending, or found in the inbox (or
+        // message requests); then loaded by its id.
+        let mut conversation = CONVERSATIONS.lock().await.get(&friend).cloned();
         for folder in ["primary", "secondary"] {
-            let inbox = request(reqwest::Method::GET, &format!("{MESSAGES}/inbox/{folder}"), "2", None).await?;
-            conversation = inbox["conversations"].as_array().into_iter().flatten().find(|c| {
-                c["type"] == "OneToOne" && c["participants"].as_array().is_some_and(|p| p.iter().any(|x| x.as_str() == Some(friend.as_str())))
-            }).and_then(|c| c["conversationId"].as_str().map(String::from));
             if conversation.is_some() {
                 break;
             }
+            let inbox = request(reqwest::Method::GET, &format!("{MESSAGES}/inbox/{folder}"), "2", None).await?;
+            let list = inbox["conversations"].as_array().cloned().unwrap_or_default();
+            conversation = list.iter().find(|c| {
+                c["type"].as_str().is_some_and(|t| t.eq_ignore_ascii_case("OneToOne"))
+                    && c["participants"].as_array().is_some_and(|p| p.iter().any(|x| id_of(x).as_deref() == Some(friend.as_str())))
+            }).and_then(|c| c["conversationId"].as_str().map(String::from));
+            if conversation.is_none() {
+                log::info!("Xbox inbox '{folder}': {} conversations, none with this friend", list.len());
+            }
+        }
+        if let Some(id) = &conversation {
+            CONVERSATIONS.lock().await.insert(friend.clone(), id.clone());
         }
         let messages = match conversation {
             Some(id) => {
@@ -210,8 +225,12 @@ pub async fn load_messages(friend: String) {
 pub async fn send(friend: String, text: String) {
     let body = json!({"parts": [{"contentType": "text", "version": 0, "text": text}]});
     match request(reqwest::Method::POST, &format!("{MESSAGES}/conversations/users/xuid({friend})"), "1", Some(body)).await {
-        Ok(_) => {
+        Ok(reply) => {
             log::info!("Xbox message sent");
+            // The reply names the conversation, so it can be loaded straight away.
+            if let Some(id) = reply["conversationId"].as_str() {
+                CONVERSATIONS.lock().await.insert(friend.clone(), id.to_string());
+            }
             load_messages(friend).await
         },
         Err(e) => fail(NET, e),
@@ -251,6 +270,22 @@ pub async fn remove_friend(xuid: String) {
         Ok(_) => refresh_friends().await,
         Err(e) => fail(NET, e),
     }
+}
+
+#[cfg(test)]
+#[test]
+fn reads_xbox_live_conversation() {
+    // The shape xblmessaging returns for conversations/OneToOne/<id> (newest first).
+    let json = json!({"type": "OneToOne", "conversationId": "c1", "participants": ["111", "222"], "messages": [
+        {"contentPayload": {"content": {"parts": [{"contentType": "text", "version": 0, "text": "reply"}]}},
+         "timestamp": "2026-10-12T00:25:00.1234567Z", "sender": "222", "messageId": "2"},
+        {"contentPayload": {"content": {"parts": [{"contentType": "text", "version": 0, "text": "hello"}]}},
+         "timestamp": "2026-10-12T00:24:00.1234567Z", "sender": 111, "messageId": "1"},
+    ]});
+    let list = parse_messages(&json, "111");
+    assert_eq!(list.len(), 2);
+    assert!(!list[0].mine && list[0].text == "reply" && list[0].time > 0);
+    assert!(list[1].mine && list[1].text == "hello");
 }
 
 #[cfg(test)]

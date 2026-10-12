@@ -45,6 +45,7 @@ async fn pass() -> Result<(String, String), String> {
 
 async fn request(method: reqwest::Method, url: &str, contract: &str, body: Option<Value>) -> Result<Value, String> {
     let (authorization, _) = pass().await?;
+    let method_is_post = method == reqwest::Method::POST;
     let mut request = http().request(method, url)
         .header("Authorization", authorization)
         .header("x-xbl-contract-version", contract)
@@ -55,6 +56,9 @@ async fn request(method: reqwest::Method, url: &str, contract: &str, body: Optio
     let response = request.send().await.map_err(|e| format!("Couldn't reach Xbox Live: {e}"))?;
     let status = response.status();
     let text = response.text().await.unwrap_or_default();
+    if method_is_post && status.is_success() {
+        log::info!("Xbox Live {status} for POST {}", url.split('?').next().unwrap_or(url));
+    }
     if !status.is_success() {
         log::warn!("Xbox Live {status} for {}: {}", url.split('?').next().unwrap_or(url), text.chars().take(300).collect::<String>());
     }
@@ -226,7 +230,8 @@ pub async fn send(friend: String, text: String) {
     let body = json!({"parts": [{"contentType": "text", "version": 0, "text": text}]});
     match request(reqwest::Method::POST, &format!("{MESSAGES}/conversations/users/xuid({friend})"), "1", Some(body)).await {
         Ok(reply) => {
-            log::info!("Xbox message sent");
+            // Ids only (message and conversation): what Xbox Live says it did with the message.
+            log::info!("Xbox message sent; Xbox Live replied: {}", reply.to_string().chars().take(300).collect::<String>());
             // The reply names the conversation, so it can be loaded straight away.
             if let Some(id) = reply["conversationId"].as_str() {
                 CONVERSATIONS.lock().await.insert(friend.clone(), id.to_string());

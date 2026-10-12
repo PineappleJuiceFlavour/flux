@@ -369,8 +369,16 @@ impl LauncherUI {
             config.page_path = [].into();
         }
 
-        // The Games screen starts in the player's chosen layout.
-        crate::pages::games_home_page::reset_layout(cx);
+        // Flux always opens on Home (the game row), whatever page was open last time.
+        let _ = (main_page, original_page_path);
+        let main_page = PageType::GamesHome;
+        let original_page_path: Arc<[PageType]> = [].into();
+        {
+            let config = InterfaceConfig::get_mut(cx);
+            config.main_page = PageType::GamesHome;
+            config.page_path = [].into();
+            config.games_layout = GamesLayout::Shelf;
+        }
 
         let mut pending_page = None;
 

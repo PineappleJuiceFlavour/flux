@@ -582,7 +582,7 @@ fn tile_art(game: &LibraryGame, size: f32) -> AnyElement {
         None => {
             let initials: String = game.name.split_whitespace().filter_map(|w| w.chars().next()).take(2).collect();
             div().w(px(size)).h(px(size)).rounded_xl().flex().items_center().justify_center().bg(rgb(0x1d2540))
-                .font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BLACK).text_size(px(28.)).text_color(rgb(FLUX_SKY)).child(initials.to_uppercase())
+                .font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BLACK).text_size(px(28.)).text_color(crate::pages::home_page::sky()).child(initials.to_uppercase())
                 .into_any_element()
         },
     }
@@ -656,7 +656,7 @@ pub fn details_panel(game: &LibraryGame, cx: &App) -> AnyElement {
         .child(div().w(px(110.)).flex_shrink_0().text_sm().text_color(muted).child(label))
         .child(div().flex_1().min_w_0().text_sm().child(value));
     let text = |s: String| div().child(s).into_any_element();
-    let sky: Hsla = rgb(FLUX_SKY).into();
+    let sky: Hsla = crate::pages::home_page::sky().into();
 
     let tags = h_flex().flex_wrap().gap_1p5().children(info.tags.iter().take(10).map(|t| {
         div().px_2().py_0p5().rounded_md().bg(gpui::white().opacity(0.08)).text_xs().child(t.clone())
@@ -948,7 +948,7 @@ impl GamesHomePage {
         let open = !self.collapsed.contains(section);
         h_flex().id(SharedString::from(format!("section-{section}"))).gap_2().items_center().px_2().py_1p5().cursor_pointer().rounded_md()
             .hover(|s| s.bg(gpui::white().opacity(0.05)))
-            .child(div().w(px(14.)).text_color(rgb(FLUX_SKY)).child(if open { "v" } else { ">" }))
+            .child(div().w(px(14.)).text_color(crate::pages::home_page::sky()).child(if open { "v" } else { ">" }))
             .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).overflow_hidden().whitespace_nowrap().text_ellipsis().child(format!("{section} ({count})")))
             .on_click(cx.listener(move |page, _, _, cx| {
                 if !page.collapsed.remove(section) {
@@ -961,7 +961,7 @@ impl GamesHomePage {
 
     fn art_panel(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
-        let sky: Hsla = rgb(FLUX_SKY).into();
+        let sky: Hsla = crate::pages::home_page::sky().into();
         let has_key = InterfaceConfig::get(cx).steamgriddb_key.as_ref().is_some_and(|k| !k.trim().is_empty());
         v_flex().mx_6().mb_2().p_4().gap_2().rounded_xl().bg(rgb(0x0b0e18).opacity(0.92)).border_1().border_color(cx.theme().border)
             .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Game art"))
@@ -1018,7 +1018,7 @@ impl GamesHomePage {
     /// PlayStation-style: a row of tiles, the selected one large with its name beside it, and
     /// the selected game's title, PLAY and details below.
     fn render_shelf(&mut self, list: &[LibraryGame], selected: Option<&LibraryGame>, height: Pixels, cx: &mut Context<Self>) -> AnyElement {
-        let sky: Hsla = rgb(FLUX_SKY).into();
+        let sky: Hsla = crate::pages::home_page::sky().into();
         let custom = InterfaceConfig::get(cx).games_sort == GamesSort::Custom;
         let more = self.matching_count(cx).saturating_sub(list.len());
         let mut tiles = h_flex().id("shelf-tiles").px_6().py_3().gap_3().items_start().overflow_x_scroll().track_scroll(&self.tiles);
@@ -1204,7 +1204,7 @@ impl GamesHomePage {
                         .when(!game.installed() && !is_selected, |this| this.opacity(0.55))
                         .when(is_selected, |this| this.shadow(vec![
                             BoxShadow { color: gpui::white().into(), offset: point(px(0.), px(0.)), blur_radius: px(0.), spread_radius: px(3.), inset: false },
-                            BoxShadow { color: rgb(FLUX_SKY).opacity(0.5).into(), offset: point(px(0.), px(0.)), blur_radius: px(22.), spread_radius: px(3.), inset: false },
+                            BoxShadow { color: crate::pages::home_page::sky().opacity(0.5).into(), offset: point(px(0.), px(0.)), blur_radius: px(22.), spread_radius: px(3.), inset: false },
                         ]))
                         .child(tile_art(game, 200.))
                         .when(game.favourite, |this| this.child(star_badge(26.)))
@@ -1299,7 +1299,7 @@ impl GamesHomePage {
             }
         });
         let open_id = game.id.clone();
-        let sky: Hsla = rgb(FLUX_SKY).into();
+        let sky: Hsla = crate::pages::home_page::sky().into();
         let status = self.message.clone().or_else(|| problem.map(|p| (p, true)));
 
         // Logo, name, platform and PLAY fill most of the first screen (PLAY near its bottom);

@@ -144,8 +144,9 @@ impl Render for EmulatorsPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let cards: Vec<AnyElement> = EMULATORS.iter().map(|e| emulator_card(e.id, self.backend.clone(), cx)).collect();
-        v_flex()
-            .size_full()
+        // Centred in the window, at most 1000 px wide.
+        v_flex().size_full().items_center().child(v_flex()
+            .w_full()
             .p_6()
             .gap_4()
             .max_w(px(1000.))
@@ -154,8 +155,8 @@ impl Render for EmulatorsPage {
                 "Flux installs each emulator from its project's official releases the first time a game needs it, or you can install them all here. \
                  BIOS files, firmware and keys aren't included: they come from your own consoles.",
             ))
-            .child(div().text_sm().text_color(rgb(FLUX_SKY)).child("Xbox One: no emulator exists yet, so Xbox One games can be listed but not played."))
+            .child(div().text_sm().text_color(crate::pages::home_page::sky()).child("Xbox One: no emulator exists yet, so Xbox One games can be listed but not played."))
             .children(cards)
-            .overflow_y_scrollbar()
+            ).overflow_y_scrollbar()
     }
 }

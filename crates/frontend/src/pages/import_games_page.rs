@@ -195,7 +195,7 @@ impl Render for ImportGamesPage {
         let (muted, border, secondary, background, danger) = (theme.muted_foreground, theme.border, theme.secondary, theme.background, theme.danger);
         let green: Hsla = rgb(0x5ee38a).into();
         let card = |title: &'static str| v_flex().gap_3().p_5().rounded_xl().bg(secondary).border_1().border_color(border)
-            .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BOLD).text_color(rgb(FLUX_SKY)).child(title));
+            .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BOLD).text_color(crate::pages::home_page::sky()).child(title));
         let busy = self.busy.is_some();
 
         let setup = match self.tab {
@@ -325,7 +325,7 @@ impl Render for ImportGamesPage {
             .max_w(px(1000.))
             .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BLACK).text_size(px(36.)).child("Import games"))
             .child(setup)
-            .when_some(self.busy, |this, b| this.child(div().text_sm().text_color(rgb(FLUX_SKY)).child(b)))
+            .when_some(self.busy, |this, b| this.child(div().text_sm().text_color(crate::pages::home_page::sky()).child(b)))
             .when_some(self.message.clone(), |this, (m, error)| this.child(div().text_sm().text_color(if error { danger } else { green }).child(m)))
             .children(results)
             .overflow_y_scrollbar()

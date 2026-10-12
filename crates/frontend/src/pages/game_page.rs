@@ -245,7 +245,7 @@ impl GamePage {
         let label = if running { "STOP" } else if problem.is_some() { "SET UP" } else { "PLAY" };
         let (status, status_color): (SharedString, Hsla) = match (&self.message, &problem) {
             (Some((text, true)), _) => (text.clone(), cx.theme().danger),
-            (Some((text, false)), _) => (text.clone(), rgb(FLUX_SKY).into()),
+            (Some((text, false)), _) => (text.clone(), crate::pages::home_page::sky().into()),
             (None, Some(problem)) => (problem.clone(), cx.theme().muted_foreground),
             (None, None) => (format!("Ready to play · {}", crate::privacy::path(&game.path)).into(), rgb(0x5ee38a).into()),
         };
@@ -350,7 +350,7 @@ impl GamePage {
         let problem = games::problem(game, cx);
 
         let card = |title: &'static str| v_flex().gap_3().p_5().rounded_xl().bg(secondary).border_1().border_color(border)
-            .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BOLD).text_color(rgb(FLUX_SKY)).child(title));
+            .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BOLD).text_color(crate::pages::home_page::sky()).child(title));
 
         let about = card("THIS GAME")
             .child(h_flex().gap_3().items_center()
@@ -450,7 +450,7 @@ impl GamePage {
 
         let running = self.is_running();
         let card = |title: &'static str| v_flex().gap_3().p_5().rounded_xl().bg(secondary).border_1().border_color(border)
-            .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BOLD).text_color(rgb(FLUX_SKY)).child(title));
+            .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BOLD).text_color(crate::pages::home_page::sky()).child(title));
 
         let presets = card("QUALITY PRESETS")
             .child(div().text_sm().text_color(muted).child("One click sets resolution, anti-aliasing, upscaling and texture filtering together."))

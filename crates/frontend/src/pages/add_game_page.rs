@@ -122,7 +122,7 @@ impl Render for AddGamePage {
         let empty_library = InterfaceConfig::get(cx).games.is_empty();
 
         let card = |title: &'static str| v_flex().gap_3().p_5().rounded_xl().bg(secondary).border_1().border_color(border)
-            .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BOLD).text_color(rgb(FLUX_SKY)).child(title));
+            .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BOLD).text_color(crate::pages::home_page::sky()).child(title));
 
         let header = v_flex().gap_2()
             .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BLACK).text_size(px(40.)).child(if empty_library { "Add your first game" } else { "Add a game" }))
@@ -151,7 +151,7 @@ impl Render for AddGamePage {
                 .child(h_flex().gap_3()
                     .child(Button::new("pick-file").primary().icon(PandoraIcon::File).label("Choose a file").on_click(cx.listener(|this, _, window, cx| this.pick(false, window, cx))))
                     .child(Button::new("pick-folder").icon(PandoraIcon::FolderOpen).label("Choose a folder").on_click(cx.listener(|this, _, window, cx| this.pick(true, window, cx))))))
-            .when_some(self.busy, |this, busy| this.child(div().text_sm().text_color(rgb(FLUX_SKY)).child(busy)))
+            .when_some(self.busy, |this, busy| this.child(div().text_sm().text_color(crate::pages::home_page::sky()).child(busy)))
             .when_some(self.error.clone(), |this, error| this.child(div().text_sm().text_color(danger).child(error)));
 
         let found = self.detection.clone().map(|d| {

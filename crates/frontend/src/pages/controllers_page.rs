@@ -70,7 +70,7 @@ impl Render for ControllersPage {
         let green: Hsla = rgb(0x5ee38a).into();
 
         let card = |title: &'static str| v_flex().gap_3().p_5().rounded_xl().bg(secondary).border_1().border_color(border)
-            .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BOLD).text_color(rgb(FLUX_SKY)).child(title));
+            .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BOLD).text_color(crate::pages::home_page::sky()).child(title));
 
         let driver: AnyElement = if status.driver_installed {
             div().text_sm().text_color(green).child("ViGEmBus driver installed").into_any_element()
@@ -136,8 +136,9 @@ impl Render for ControllersPage {
 
         let mapping = self.render_mapping(&status, cx);
 
-        v_flex()
-            .size_full()
+        // Centred in the window, at most 1000 px wide.
+        v_flex().size_full().items_center().child(v_flex()
+            .w_full()
             .p_6()
             .gap_4()
             .max_w(px(1000.))
@@ -146,7 +147,7 @@ impl Render for ControllersPage {
             .child(connected)
             .child(mapping)
             .child(tips)
-            .overflow_y_scrollbar()
+            ).overflow_y_scrollbar()
     }
 }
 
@@ -157,7 +158,7 @@ impl ControllersPage {
         let (muted, border, secondary, background, primary, hover, foreground) =
             (theme.muted_foreground, theme.border, theme.secondary, theme.background, theme.primary, theme.secondary_hover, theme.foreground);
         let held = status.pads.iter().fold(0u32, |all, p| all | p.held);
-        let sky: Hsla = rgb(FLUX_SKY).into();
+        let sky: Hsla = crate::pages::home_page::sky().into();
 
         let chip = move |id: SharedString, label: SharedString, on: bool| div().id(id)
             .px_3().py_1p5().rounded_md().text_sm().cursor_pointer()

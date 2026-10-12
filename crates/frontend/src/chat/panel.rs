@@ -221,7 +221,7 @@ impl Render for ChatPanel {
 
         let privacy = crate::privacy::on();
         let privacy_toggle = h_flex().id("chat-privacy").gap_1p5().items_center().cursor_pointer().text_xs()
-            .text_color(if privacy { rgb(FLUX_SKY).into() } else { muted })
+            .text_color(if privacy { crate::pages::home_page::sky().into() } else { muted })
             .child(Icon::new(if privacy { PandoraIcon::EyeOff } else { PandoraIcon::Eye }).size_3p5())
             .child(if privacy { "Privacy mode on: names and messages hidden" } else { "Privacy mode" })
             .on_click(|_, _, cx| {
@@ -242,7 +242,7 @@ impl Render for ChatPanel {
 impl ChatPanel {
     fn connect_card(&mut self, network: Network, state: &NetState, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
-        let sky: Hsla = rgb(FLUX_SKY).into();
+        let sky: Hsla = crate::pages::home_page::sky().into();
         let heading = |text: &'static str| div().font_family(DISPLAY_FONT).font_weight(FontWeight::BOLD).text_lg().child(text);
         let step = |text: &'static str| div().text_sm().text_color(muted).child(text);
         let link = |id: &'static str, label: &'static str, url: &'static str| div().id(id).text_sm().text_color(sky).cursor_pointer()

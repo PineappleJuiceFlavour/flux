@@ -395,6 +395,7 @@ impl LauncherUI {
         };
 
         crate::privacy::set(InterfaceConfig::get(cx).privacy_mode);
+        crate::pages::home_page::set_accent(InterfaceConfig::get(cx).accent_color);
         // The SteamGridDB key lives in Credential Manager (an old interface.json's key moves there).
         {
             let config = InterfaceConfig::get_mut(cx);

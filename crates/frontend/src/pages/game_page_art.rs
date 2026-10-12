@@ -124,7 +124,7 @@ impl GamePage {
                         .object_fit(if kind == ArtKind::Logo { ObjectFit::Contain } else { ObjectFit::Cover }))))
                 .child(h_flex().gap_1p5().items_center()
                     .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(kind.label()))
-                    .when(locked, |this| this.child(div().text_xs().text_color(rgb(FLUX_SKY)).child("chosen"))))
+                    .when(locked, |this| this.child(div().text_xs().text_color(crate::pages::home_page::sky()).child("chosen"))))
                 .on_click(cx.listener(move |page, _, _, cx| {
                     if page.art.kind == Some(kind) {
                         page.art.kind = None;
@@ -136,7 +136,7 @@ impl GamePage {
         }));
 
         let mut card = v_flex().gap_3().p_5().rounded_xl().bg(secondary).border_1().border_color(border)
-            .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BOLD).text_color(rgb(FLUX_SKY)).child("ART"))
+            .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BOLD).text_color(crate::pages::home_page::sky()).child("ART"))
             .child(div().text_sm().text_color(muted).child(
                 "Click a kind to pick from SteamGridDB, or use your own picture. What you pick stays: Flux never swaps it, even after updates.",
             ))
@@ -179,7 +179,7 @@ impl GamePage {
                         page.art.message = Some(("Flux will pick the best one again".into(), false));
                         cx.notify();
                     })))))
-                .when_some(self.art.busy, |this, b| this.child(div().text_sm().text_color(rgb(FLUX_SKY)).child(b)))
+                .when_some(self.art.busy, |this, b| this.child(div().text_sm().text_color(crate::pages::home_page::sky()).child(b)))
                 .when_some(self.art.message.clone(), |this, (m, error)| this.child(div().text_sm().text_color(if error { danger } else { green }).child(m)))
                 .child(h_flex().flex_wrap().gap_3().children(choices))
                 .when(!self.art.options.is_empty() && self.art.options.len() % 50 == 0, |this| this.child(h_flex().child(

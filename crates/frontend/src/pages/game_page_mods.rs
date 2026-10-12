@@ -143,7 +143,7 @@ impl GamePage {
         let green: Hsla = rgb(0x5ee38a).into();
         let warn: Hsla = rgb(0xffb547).into();
         let card = |title: &'static str| v_flex().gap_3().p_5().rounded_xl().bg(secondary).border_1().border_color(border)
-            .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BOLD).text_color(rgb(FLUX_SKY)).child(title));
+            .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BOLD).text_color(crate::pages::home_page::sky()).child(title));
         let xbox = game.kind == GameKind::Xbox360;
         let emulator = if xbox { "Xenia" } else { "RPCS3" };
         let installed = if xbox { game_mods::xenia_dir(cx).is_some() } else { game_mods::rpcs3_dir(cx).is_some() };
@@ -189,7 +189,7 @@ impl GamePage {
                 .child(v_flex().flex_1().min_w_0().gap_0p5()
                     .child(h_flex().gap_2().items_center()
                         .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(p.name.clone()))
-                        .when(p.source == "your patches", |this| this.child(div().text_xs().text_color(rgb(FLUX_SKY)).child("yours")))
+                        .when(p.source == "your patches", |this| this.child(div().text_xs().text_color(crate::pages::home_page::sky()).child("yours")))
                         .when(!p.fits, |this| this.child(div().text_xs().text_color(warn).child("other game version"))))
                     .when(!p.author.is_empty(), |this| this.child(div().text_xs().text_color(muted).child(format!("by {}", p.author))))
                     .when(!p.notes.is_empty(), |this| this.child(div().text_xs().text_color(muted).child(p.notes.chars().take(400).collect::<String>()))))
@@ -285,7 +285,7 @@ impl GamePage {
             files_card = files_card
                 .child(div().text_sm().child(format!("Unpacking the disc... {} of {}", size_text(done), size_text(total))))
                 .child(div().h(px(8.)).w_full().rounded_full().bg(background)
-                    .child(div().h_full().rounded_full().bg(rgb(FLUX_SKY)).w(relative(pct))))
+                    .child(div().h_full().rounded_full().bg(crate::pages::home_page::sky()).w(relative(pct))))
                 .child(h_flex().child(Button::new("stop-unpack").small().label("Stop").on_click(move |_, _, _| {
                     game_mods::UNPACK_STOP.lock().unwrap().push(id.clone());
                 })));
@@ -479,7 +479,7 @@ impl GamePage {
         let theme = cx.theme();
         let (muted, border, secondary, background, primary, hover) = (theme.muted_foreground, theme.border, theme.secondary, theme.background, theme.primary, theme.secondary_hover);
         let card = |title: &'static str| v_flex().gap_3().p_5().rounded_xl().bg(secondary).border_1().border_color(border)
-            .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BOLD).text_color(rgb(FLUX_SKY)).child(title));
+            .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BOLD).text_color(crate::pages::home_page::sky()).child(title));
         let xbox = game.kind == GameKind::Xbox360;
         let ids = game_mods::ids(game, cx);
         let emu_id = game.kind.emulator().unwrap_or_default();

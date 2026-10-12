@@ -28,6 +28,44 @@ pub const FLUX_SKY: u32 = 0x7aceff;
 pub const FLUX_BLUE: u32 = 0x5682ff;
 pub const FLUX_VIOLET: u32 = 0x7a2cff;
 
+/// The player's accent colour (Settings › Appearance), or 0 for Flux's own blue and violet.
+static ACCENT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Follow the accent setting (at startup and when it changes).
+pub fn set_accent(color: Option<u32>) {
+    ACCENT.store(color.map(|c| c | 0xff00_0000).unwrap_or(0), std::sync::atomic::Ordering::Relaxed);
+}
+
+fn accent_shade(lightness: f32) -> Option<Hsla> {
+    let color = ACCENT.load(std::sync::atomic::Ordering::Relaxed);
+    if color == 0 {
+        return None;
+    }
+    let mut c: Hsla = rgb(color & 0x00ff_ffff).into();
+    c.l = (c.l + lightness).clamp(0.12, 0.88);
+    Some(c)
+}
+
+/// Light accent: titles, links and highlights (Flux's sky blue by default).
+pub fn sky() -> Hsla {
+    accent_shade(0.18).unwrap_or_else(|| crate::pages::home_page::sky().into())
+}
+
+/// The accent itself (Flux's blue by default).
+pub fn blue() -> Hsla {
+    accent_shade(0.0).unwrap_or_else(|| crate::pages::home_page::blue().into())
+}
+
+/// Dark accent: the far end of gradients like PLAY (Flux's violet by default).
+pub fn violet() -> Hsla {
+    accent_shade(-0.16).unwrap_or_else(|| crate::pages::home_page::violet().into())
+}
+
+/// Darkest accent: the PLAY button's bottom edge.
+pub fn deep() -> Hsla {
+    accent_shade(-0.3).unwrap_or_else(|| rgb(0x3a1d99).into())
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum HomeTab {
     Play,
@@ -171,8 +209,8 @@ impl HomePage {
         let (label, status_text, status_color) = match (&selected, status) {
             (None, _) => ("CREATE", "No installations yet".to_string(), cx.theme().muted_foreground),
             (Some(_), InstanceStatus::NotRunning) => ("PLAY", "Ready to play".to_string(), rgb(0x5ee38a).into()),
-            (Some(_), InstanceStatus::Launching) => ("LAUNCHING", "Starting the game...".to_string(), rgb(FLUX_SKY).into()),
-            (Some(_), InstanceStatus::Running) => ("STOP", "Playing now".to_string(), rgb(FLUX_SKY).into()),
+            (Some(_), InstanceStatus::Launching) => ("LAUNCHING", "Starting the game...".to_string(), crate::pages::home_page::sky().into()),
+            (Some(_), InstanceStatus::Running) => ("STOP", "Playing now".to_string(), crate::pages::home_page::sky().into()),
             (Some(_), InstanceStatus::Stopping) => ("STOPPING", "Closing the game...".to_string(), cx.theme().muted_foreground),
         };
         let status_line = match &selected {
@@ -260,7 +298,7 @@ impl HomePage {
                 .bg(cx.theme().secondary)
                 .border_1()
                 .border_color(cx.theme().border)
-                .child(div().font_family(PIXEL_FONT).text_color(rgb(FLUX_SKY)).child(date))
+                .child(div().font_family(PIXEL_FONT).text_color(crate::pages::home_page::sky()).child(date))
                 .children(items.iter().map(|item| h_flex().gap_2().items_start()
                     .child(div().mt(px(7.)).size_1p5().flex_shrink_0().rounded_full().bg(cx.theme().muted_foreground))
                     .child(div().flex_1().min_w_0().text_sm().child(*item))))
@@ -288,7 +326,7 @@ impl HomePage {
 pub(crate) fn pixel_title(head: &str, last: &str, size: f32) -> Div {
     let full = if head.is_empty() { last.to_string() } else { format!("{head} {last}") };
     let accent = full.len() - last.len()..full.len();
-    let styled = StyledText::new(full.clone()).with_highlights([(accent, HighlightStyle { color: Some(rgb(FLUX_SKY).into()), ..Default::default() })]);
+    let styled = StyledText::new(full.clone()).with_highlights([(accent, HighlightStyle { color: Some(crate::pages::home_page::sky().into()), ..Default::default() })]);
     div()
         .relative()
         .font_family(PIXEL_FONT)
@@ -303,7 +341,7 @@ pub(crate) fn pixel_title(head: &str, last: &str, size: f32) -> Div {
 pub(crate) fn display_title(head: &str, last: &str, size: f32) -> Div {
     let full = if head.is_empty() { last.to_string() } else { format!("{head} {last}") };
     let accent = full.len() - last.len()..full.len();
-    let styled = StyledText::new(full).with_highlights([(accent, HighlightStyle { color: Some(rgb(FLUX_SKY).into()), ..Default::default() })]);
+    let styled = StyledText::new(full).with_highlights([(accent, HighlightStyle { color: Some(crate::pages::home_page::sky().into()), ..Default::default() })]);
     div()
         .font_family(DISPLAY_FONT)
         .font_weight(FontWeight::BLACK)
@@ -314,7 +352,7 @@ pub(crate) fn display_title(head: &str, last: &str, size: f32) -> Div {
 }
 
 pub(crate) fn play_button(label: &'static str, on_click: impl Fn(&mut Window, &mut App) + 'static) -> AnyElement {
-    let blue: Hsla = rgb(FLUX_BLUE).into();
+    let blue: Hsla = crate::pages::home_page::blue().into();
     div()
         .relative()
         .child(
@@ -341,9 +379,9 @@ pub(crate) fn play_button(label: &'static str, on_click: impl Fn(&mut Window, &m
                 .items_center()
                 .justify_center()
                 .cursor_pointer()
-                .bg(linear_gradient(100., linear_color_stop(rgb(FLUX_SKY), 0.), linear_color_stop(rgb(FLUX_VIOLET), 1.)))
+                .bg(linear_gradient(100., linear_color_stop(crate::pages::home_page::sky(), 0.), linear_color_stop(crate::pages::home_page::violet(), 1.)))
                 .border_b_4()
-                .border_color(rgb(0x3a1d99))
+                .border_color(deep())
                 .hover(|this| this.opacity(0.92))
                 .active(|this| this.mt(px(2.)).border_b_2())
                 .child(

@@ -222,6 +222,7 @@ fn accent_swatches(cx: &mut Context<super::SettingsRoot>) -> AnyElement {
                 .hover(|this| this.opacity(0.85))
                 .on_click(move |_, _, cx| {
                     InterfaceConfig::get_mut(cx).accent_color = if color == ACCENTS[0].0 { None } else { Some(color) };
+                    crate::pages::home_page::set_accent(InterfaceConfig::get(cx).accent_color);
                     InterfaceConfig::apply_theme(cx, true);
                 })
         }))

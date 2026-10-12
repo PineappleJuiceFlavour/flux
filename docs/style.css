@@ -1,0 +1,189 @@
+/* Flux site: the launcher's own look. Dark navy glass, the PLAY gradient as the one loud thing,
+   heavy uppercase titles with the last word lit in sky blue, quiet label/value fact rows. */
+:root {
+  --bg: #07090f;
+  --bg-2: #0c0f19;
+  --surface: rgba(7, 9, 16, 0.78);
+  --line: rgba(255, 255, 255, 0.07);
+  --fg: #eef1f8;
+  --muted: #8d95aa;
+  --sky: #7aceff;
+  --blue: #5682ff;
+  --violet: #7a2cff;
+  --deep: #3a1d99;
+  --coffee: #ffdd00;
+  --tab: rgba(86, 130, 255, 0.22);
+  --font: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --radius: 12px;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { transition: none !important; animation: none !important; } }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.55 var(--font);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* The app's blurred game-art glow behind everything. */
+.glow { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; background: var(--bg); }
+.glow::before, .glow::after {
+  content: ""; position: absolute; border-radius: 50%; filter: blur(120px); opacity: 0.45;
+}
+.glow::before { width: 60vw; height: 60vw; left: -15vw; top: -20vw; background: radial-gradient(circle, #1d3b8f, transparent 70%); }
+.glow::after { width: 55vw; height: 55vw; right: -15vw; top: 20vh; background: radial-gradient(circle, #3b1786, transparent 70%); }
+
+a { color: var(--sky); text-decoration: none; }
+a:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--sky); outline-offset: 3px; border-radius: 6px; }
+img { max-width: 100%; display: block; }
+
+.wrap { width: 100%; max-width: 1180px; margin: 0 auto; padding-inline: 24px; }
+@media (max-width: 520px) { .wrap { padding-inline: 16px; } }
+
+/* Top bar, like Flux's: logo, tabs, then actions on the right. */
+.topbar {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10;
+  background: rgba(7, 9, 15, 0.82); backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--line);
+}
+.topbar .wrap { display: flex; align-items: center; gap: 6px; min-height: 60px; flex-wrap: wrap; padding-block: 8px; }
+.brand { display: flex; align-items: center; gap: 10px; margin-right: 14px; color: var(--fg); font-weight: 800; font-size: 18px; letter-spacing: 0.01em; }
+.brand:hover { text-decoration: none; }
+.brand img { width: 26px; height: auto; }
+.tabs { display: flex; gap: 2px; flex-wrap: wrap; }
+.tab {
+  padding: 6px 12px; border-radius: 8px; color: var(--muted); font-weight: 600; font-size: 15px;
+}
+.tab:hover { color: var(--fg); text-decoration: none; }
+.tab[aria-current="page"] { background: var(--tab); color: var(--fg); }
+.topbar .spacer { flex: 1; }
+
+/* Buttons. The PLAY button is Flux's signature: sky → blue → violet with a deep bottom edge. */
+.play {
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  min-width: 260px; padding: 14px 28px; border-radius: 10px;
+  background: linear-gradient(90deg, var(--sky), var(--blue) 50%, var(--violet));
+  box-shadow: 0 4px 0 var(--deep), 0 10px 34px rgba(86, 130, 255, 0.35);
+  color: #fff; font-weight: 900; font-size: 22px; letter-spacing: 0.06em; text-transform: uppercase;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
+}
+.play:hover { text-decoration: none; filter: brightness(1.08); transform: translateY(-1px); }
+.play:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--deep), 0 6px 20px rgba(86, 130, 255, 0.3); }
+.play svg { width: 22px; height: 22px; }
+.play.small { min-width: 0; padding: 8px 16px; font-size: 14px; box-shadow: 0 3px 0 var(--deep); }
+
+.ghost {
+  display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12); background: rgba(255, 255, 255, 0.03);
+  color: var(--fg); font-weight: 600; font-size: 15px;
+}
+.ghost:hover { background: rgba(255, 255, 255, 0.08); text-decoration: none; }
+.ghost svg { width: 17px; height: 17px; }
+
+/* Donate: Buy Me a Coffee's yellow cup, the only warm colour on the page. */
+.donate {
+  display: inline-grid; place-items: center; width: 38px; height: 38px; margin-right: 8px; border-radius: 50%;
+  border: 1px solid rgba(255, 221, 0, 0.35); background: rgba(255, 221, 0, 0.08); color: var(--coffee);
+  transition: background 0.15s, transform 0.15s;
+}
+.donate:hover { background: rgba(255, 221, 0, 0.18); transform: translateY(-1px); text-decoration: none; }
+.donate svg { width: 19px; height: 19px; }
+.donate-label svg { color: var(--coffee); }
+
+/* Headline, the way Flux titles a game: heavy caps, last word in sky. */
+.headline { margin: 0; font-weight: 900; font-size: clamp(38px, 6.4vw, 76px); line-height: 0.98; letter-spacing: -0.01em; text-transform: uppercase; text-wrap: balance; }
+.headline em { font-style: normal; color: var(--sky); }
+.subhead { margin: 0; font-size: clamp(19px, 2.2vw, 25px); font-weight: 600; text-wrap: balance; }
+.meta { color: rgba(255, 255, 255, 0.78); font-size: 15px; }
+.meta span + span::before { content: "·"; margin: 0 10px; color: var(--muted); }
+
+.hero { padding-block: 56px 28px; display: grid; gap: 22px; }
+.hero .lead { max-width: 62ch; font-size: 18px; color: rgba(255, 255, 255, 0.86); margin: 0; }
+.actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.note { color: var(--muted); font-size: 13px; }
+
+/* Facts row, copied from the app's "Time played / Last played / Genre" strip. */
+.facts { display: flex; flex-wrap: wrap; gap: 18px 44px; }
+.fact { display: grid; gap: 2px; min-width: 120px; }
+.fact .k { font-size: 12px; color: rgba(255, 255, 255, 0.55); }
+.fact .v { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* Screenshot in a window frame. */
+.shot {
+  border-radius: 14px; overflow: hidden; border: 1px solid var(--line);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(122, 206, 255, 0.06);
+  background: var(--bg-2);
+}
+.hero-shot { margin-top: 10px; }
+
+section { padding-block: 44px; }
+.section-title { margin: 0 0 6px; font-size: 13px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.section-head { margin: 0 0 22px; font-size: clamp(26px, 3.4vw, 38px); font-weight: 900; text-transform: uppercase; line-height: 1.05; text-wrap: balance; }
+.section-head em { font-style: normal; color: var(--sky); }
+
+/* Feature row: works like the Home row. One tile is selected (white ring + glow); its details show below. */
+.row { display: flex; gap: 14px; overflow-x: auto; padding: 14px 4px 10px; scroll-snap-type: x proximity; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.18) rgba(255,255,255,0.04); }
+.tile {
+  flex: 0 0 auto; width: 150px; height: 150px; border-radius: 16px; scroll-snap-align: start;
+  display: grid; place-items: center; align-content: center; gap: 10px; padding: 12px;
+  border: 0; cursor: pointer; color: #fff; font: 700 14px/1.2 var(--font); text-align: center;
+  background: linear-gradient(150deg, rgba(122, 206, 255, 0.16), rgba(122, 44, 255, 0.16)), var(--bg-2);
+  opacity: 0.8; transition: width 0.26s cubic-bezier(.22,1,.36,1), height 0.26s cubic-bezier(.22,1,.36,1), opacity 0.2s, box-shadow 0.2s;
+}
+.tile:hover { opacity: 1; }
+.tile svg { width: 34px; height: 34px; color: var(--sky); }
+.tile[aria-selected="true"] {
+  width: 190px; height: 190px; opacity: 1;
+  box-shadow: 0 0 0 3px #fff, 0 0 28px 4px rgba(122, 206, 255, 0.5);
+}
+.tile[aria-selected="true"] svg { width: 44px; height: 44px; }
+@media (max-width: 520px) { .tile { width: 120px; height: 120px; } .tile[aria-selected="true"] { width: 150px; height: 150px; } }
+
+.feature { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 36px; align-items: start; padding-top: 22px; }
+.feature > * { min-width: 0; }
+.feature h3 { margin: 0 0 10px; font-size: clamp(28px, 3.6vw, 44px); font-weight: 900; text-transform: uppercase; line-height: 1.02; text-wrap: balance; }
+.feature h3 em { font-style: normal; color: var(--sky); }
+.feature p { margin: 0 0 18px; max-width: 58ch; color: rgba(255, 255, 255, 0.86); }
+.feature ul { margin: 0 0 18px; padding-left: 18px; color: rgba(255, 255, 255, 0.86); }
+.feature li + li { margin-top: 4px; }
+.feature .art { border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: var(--bg-2); min-height: 220px; display: grid; place-items: center; }
+.feature .art img { width: 100%; height: auto; }
+.feature .art .placeholder { padding: 32px; text-align: center; color: var(--muted); }
+.feature .art .placeholder svg { width: 70px; height: 70px; color: var(--sky); margin: 0 auto 12px; }
+@media (max-width: 860px) { .feature { grid-template-columns: 1fr; } }
+
+/* Panels (details box in the app). */
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 24px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.grid-3 > * { min-width: 0; }
+@media (max-width: 860px) { .grid-3 { grid-template-columns: 1fr; } }
+.panel h4 { margin: 0 0 6px; font-size: 17px; }
+.panel p { margin: 0; color: rgba(255, 255, 255, 0.78); font-size: 15px; }
+
+.cta { display: flex; align-items: center; justify-content: space-between; gap: 22px; flex-wrap: wrap; }
+.cta h2 { margin: 0; font-size: clamp(24px, 3vw, 34px); font-weight: 900; text-transform: uppercase; }
+
+/* Support page. */
+.faq { display: grid; gap: 10px; }
+.faq details { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 0 20px; }
+.faq summary { cursor: pointer; padding: 16px 0; font-weight: 700; font-size: 16px; list-style: none; display: flex; justify-content: space-between; gap: 16px; }
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary::after { content: "+"; color: var(--sky); font-weight: 900; font-size: 20px; line-height: 1; }
+.faq details[open] summary::after { content: "−"; }
+.faq .answer { padding-bottom: 18px; color: rgba(255, 255, 255, 0.84); max-width: 72ch; }
+.faq .answer p { margin: 0 0 10px; }
+.faq .answer ol, .faq .answer ul { margin: 0 0 10px; padding-left: 20px; }
+code { font-family: "Cascadia Code", Consolas, ui-monospace, monospace; font-size: 0.9em; background: rgba(255, 255, 255, 0.07); padding: 2px 6px; border-radius: 5px; overflow-wrap: anywhere; }
+
+footer { border-top: 1px solid var(--line); margin-top: 40px; }
+footer .wrap { display: flex; gap: 14px 24px; flex-wrap: wrap; align-items: center; padding-block: 26px; color: var(--muted); font-size: 14px; }
+footer .spacer { flex: 1; }

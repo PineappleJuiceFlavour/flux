@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Flux Support</title>
+<meta name="description" content="Help with installing, updating and using Flux, and how to report a bug.">
+<link rel="icon" href="assets/favicon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="glow" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="assets/logo.png" alt="">Flux</a>
+    <nav class="tabs" aria-label="Site">
+      <a class="tab" href="index.html">Home</a>
+      <a class="tab" href="index.html#showcase">Features</a>
+      <a class="tab" href="support.html" aria-current="page">Support</a>
+      <a class="tab" href="https://github.com/PineappleJuiceFlavour/flux/tree/main" target="_blank" rel="noopener">Source</a>
+    </nav>
+    <span class="spacer"></span>
+    <a class="play small" href="https://github.com/PineappleJuiceFlavour/flux/releases/latest/download/Flux.exe">Download</a>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <section class="hero" aria-labelledby="title">
+      <h1 class="headline" id="title">How can we <em>help</em>?</h1>
+      <p class="lead">Answers to the common questions are below. If something's broken or missing, report it on GitHub and include your Flux version (shown in Settings).</p>
+      <div class="actions">
+        <a class="play" href="https://github.com/PineappleJuiceFlavour/flux/issues/new" target="_blank" rel="noopener">Report a bug</a>
+        <a class="ghost" href="https://github.com/PineappleJuiceFlavour/flux/issues" target="_blank" rel="noopener">See known issues</a>
+        <a class="ghost" href="https://github.com/PineappleJuiceFlavour/flux/releases" target="_blank" rel="noopener">Release notes</a>
+      </div>
+    </section>
+
+    <section aria-labelledby="report-title">
+      <p class="section-title">Before you report</p>
+      <h2 class="section-head" id="report-title">Help us <em>fix it fast</em></h2>
+      <div class="grid-3">
+        <div class="panel"><h4>What happened</h4><p>What you clicked, what you expected, and what Flux did instead. A screenshot helps a lot.</p></div>
+        <div class="panel"><h4>Your version</h4><p>Settings shows your Flux version. Flux updates itself, so check you're on the newest one first.</p></div>
+        <div class="panel"><h4>The log</h4><p>Attach <code>launcher.log</code> from <code>%LOCALAPPDATA%\FluxLauncher</code>. It has no passwords in it.</p></div>
+      </div>
+    </section>
+
+    <section aria-labelledby="faq-title">
+      <p class="section-title">Questions</p>
+      <h2 class="section-head" id="faq-title">Common <em>questions</em></h2>
+      <div class="faq">
+        <details open>
+          <summary>How do I install Flux?</summary>
+          <div class="answer">
+            <ol>
+              <li>Click <strong>Download</strong> at the top of this page. It always gets the newest <code>Flux.exe</code>.</li>
+              <li>Move <code>Flux.exe</code> anywhere you like, for example your Desktop.</li>
+              <li>Double-click it. There's no installer; Flux sets itself up on first run.</li>
+            </ol>
+          </div>
+        </details>
+        <details>
+          <summary>Windows says "Windows protected your PC". Is that safe?</summary>
+          <div class="answer">
+            <p>Windows shows this for apps that aren't signed with a paid certificate yet. Click <strong>More info</strong>, then <strong>Run anyway</strong>.</p>
+            <p>Every release is built by GitHub from the public source code. To check a download yourself, run <code>gh attestation verify Flux.exe -R PineappleJuiceFlavour/flux</code> with the GitHub CLI.</p>
+          </div>
+        </details>
+        <details>
+          <summary>My antivirus flagged Flux</summary>
+          <div class="answer">
+            <p>A few machine-learning scanners flag new, unsigned launchers because they download files and start games, which is what launchers do. These are false positives.</p>
+            <p>You can compare the SHA-256 shown on the <a href="https://github.com/PineappleJuiceFlavour/flux/releases" target="_blank" rel="noopener">release page</a> with your file, and read the source on GitHub.</p>
+          </div>
+        </details>
+        <details>
+          <summary>How do I update?</summary>
+          <div class="answer">
+            <p>Flux checks for updates when it opens and shows an <strong>Update available</strong> button in the top bar. Click it and Flux updates and restarts. It only installs an update whose signature matches.</p>
+          </div>
+        </details>
+        <details>
+          <summary>Where does Flux keep my data?</summary>
+          <div class="answer">
+            <p>Settings, your library and Minecraft instances live in <code>%LOCALAPPDATA%\FluxLauncher</code>. Sign-ins and keys are kept in Windows Credential Manager, on your PC only.</p>
+            <p>To start fresh, close Flux and rename that folder.</p>
+          </div>
+        </details>
+        <details>
+          <summary>How do I add my games?</summary>
+          <div class="answer">
+            <ul>
+              <li><strong>Import games</strong> in the top bar finds games from Steam, Epic, the Xbox app, GOG, Ubisoft, EA, Battle.net, Amazon and Rockstar.</li>
+              <li><strong>Tools › Add a game</strong> adds anything else: drop in a game's file, folder or disc image.</li>
+            </ul>
+          </div>
+        </details>
+        <details>
+          <summary>A console game won't start</summary>
+          <div class="answer">
+            <ol>
+              <li>Open <strong>Tools › Emulators</strong> and check the emulator for that console is installed.</li>
+              <li>Open the game's <strong>Options</strong>. The Setup tab says what's missing.</li>
+              <li>Some consoles need files you dump from your own console, such as a PS2 BIOS or PS3 firmware. Each emulator explains this the first time you run it.</li>
+            </ol>
+            <p>Flux doesn't include or download games. Use copies of games you own.</p>
+          </div>
+        </details>
+        <details>
+          <summary>My PlayStation controller doesn't work in games</summary>
+          <div class="answer">
+            <p>Games that only support Xbox controllers need the free ViGEmBus driver. Open <strong>Tools › Controllers</strong>, click the ViGEmBus link, install it, then turn on controller emulation in Flux.</p>
+          </div>
+        </details>
+        <details>
+          <summary>The Microsoft sign-in page says "Pandora Launcher"</summary>
+          <div class="answer">
+            <p>Flux is based on Pandora Launcher and uses its Microsoft sign-in until Flux's own one is approved. Your account still signs in to Flux, and only to Flux.</p>
+          </div>
+        </details>
+        <details>
+          <summary>How do I hide names and messages while streaming?</summary>
+          <div class="answer">
+            <p>Turn on <strong>Privacy mode</strong> in Settings. Friends' names, emails and every chat message are replaced with asterisks until you turn it off.</p>
+          </div>
+        </details>
+        <details>
+          <summary>Is Flux free? Can I see the code?</summary>
+          <div class="answer">
+            <p>Yes. Flux is free and open source under the MIT license. The code is on <a href="https://github.com/PineappleJuiceFlavour/flux/tree/main" target="_blank" rel="noopener">GitHub</a>.</p>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section>
+      <div class="panel cta">
+        <h2>Still <em style="font-style:normal;color:var(--sky)">stuck</em>?</h2>
+        <div class="actions">
+          <a class="play" href="https://github.com/PineappleJuiceFlavour/flux/issues/new" target="_blank" rel="noopener">Report a bug</a>
+          <a class="ghost" href="https://github.com/PineappleJuiceFlavour/flux/issues/new" target="_blank" rel="noopener">Request a feature</a>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Flux Launcher</span>
+    <a href="index.html">Home</a>
+    <a href="https://github.com/PineappleJuiceFlavour/flux/tree/main" target="_blank" rel="noopener">Source</a>
+    <a href="https://github.com/PineappleJuiceFlavour/flux/releases" target="_blank" rel="noopener">Releases</a>
+    <span class="spacer"></span>
+    <span>Free and open source under the MIT license. Not affiliated with Mojang, Microsoft, Sony or Valve.</span>
+  </div>
+</footer>
+</body>
+</html>

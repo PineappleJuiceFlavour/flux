@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Flux Launcher</title>
+<meta name="description" content="Flux is a free Windows launcher that puts your PC games, console emulators and Minecraft in one place.">
+<link rel="icon" href="assets/favicon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="glow" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="assets/logo.png" alt="">Flux</a>
+    <nav class="tabs" aria-label="Site">
+      <a class="tab" href="index.html" aria-current="page">Home</a>
+      <a class="tab" href="#showcase">Features</a>
+      <a class="tab" href="support.html">Support</a>
+      <a class="tab" href="https://github.com/PineappleJuiceFlavour/flux/tree/main" target="_blank" rel="noopener">Source</a>
+    </nav>
+    <span class="spacer"></span>
+    <a class="play small" href="https://github.com/PineappleJuiceFlavour/flux/releases/latest/download/Flux.exe">Download</a>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <section class="hero" aria-labelledby="title">
+      <h1 class="headline" id="title">Every game you play, <em>one place</em></h1>
+      <p class="subhead">Flux Launcher</p>
+      <div class="meta"><span>Windows 10 &amp; 11</span><span>Free</span><span>Open source</span></div>
+      <p class="lead">Flux is a free Windows launcher that puts your PC games, console emulators and Minecraft in one place, with a Home screen you can drive with a mouse, keyboard or controller.</p>
+      <div class="actions">
+        <a class="play" href="https://github.com/PineappleJuiceFlavour/flux/releases/latest/download/Flux.exe">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m6 11 6 6 6-6"/><path d="M5 21h14"/></svg>
+          Download
+        </a>
+        <a class="ghost" href="https://github.com/PineappleJuiceFlavour/flux/tree/main" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>
+          Source code
+        </a>
+        <a class="ghost" href="support.html">Support</a>
+      </div>
+      <p class="note">The button always downloads the newest <code>Flux.exe</code> straight from GitHub. No installer: run it and Flux sets itself up.</p>
+      <div class="facts" aria-label="About the download">
+        <div class="fact"><span class="k">Latest version</span><span class="v" id="version">Newest release</span></div>
+        <div class="fact"><span class="k">Released</span><span class="v" id="released">On GitHub</span></div>
+        <div class="fact"><span class="k">Platform</span><span class="v">Windows 10 / 11, 64-bit</span></div>
+        <div class="fact"><span class="k">Updates</span><span class="v">Built in, signed</span></div>
+        <div class="fact"><span class="k">License</span><span class="v">MIT</span></div>
+      </div>
+      <div class="shot hero-shot"><img src="assets/home.jpg" width="1600" height="863" alt="Flux's Home screen: a row of game tiles across the top, the selected game's title, PLAY button, description and details below."></div>
+    </section>
+  </div>
+
+  <div class="wrap">
+    <section id="showcase" aria-labelledby="showcase-title">
+      <p class="section-title">Showcase</p>
+      <h2 class="section-head" id="showcase-title">What Flux <em>does</em></h2>
+
+      <div class="row" role="tablist" aria-label="Features" id="row">
+        <button class="tile" role="tab" id="t-home" aria-controls="p-home" aria-selected="true" tabindex="0">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M10 21v-6h4v6"/></svg>Home</button>
+        <button class="tile" role="tab" id="t-library" aria-controls="p-library" aria-selected="false" tabindex="-1">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Library &amp; import</button>
+        <button class="tile" role="tab" id="t-emulators" aria-controls="p-emulators" aria-selected="false" tabindex="-1">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>Emulators</button>
+        <button class="tile" role="tab" id="t-minecraft" aria-controls="p-minecraft" aria-selected="false" tabindex="-1">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="M3 7l9 5 9-5"/><path d="M12 12v10"/></svg>Minecraft</button>
+        <button class="tile" role="tab" id="t-controllers" aria-controls="p-controllers" aria-selected="false" tabindex="-1">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 11h4M8 9v4"/><path d="M15 12h.01M18 10h.01"/><path d="M17.3 5H6.7a4 4 0 0 0-3.95 3.4L2 14.5A3 3 0 0 0 5 18c1 0 1.5-.5 2-1l1.4-1.4A2 2 0 0 1 9.8 15h4.4a2 2 0 0 1 1.4.6L17 17c.5.5 1 1 2 1a3 3 0 0 0 3-3.5l-.75-6.1A4 4 0 0 0 17.3 5z"/></svg>Controllers</button>
+        <button class="tile" role="tab" id="t-chat" aria-controls="p-chat" aria-selected="false" tabindex="-1">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"/></svg>Chat</button>
+        <button class="tile" role="tab" id="t-art" aria-controls="p-art" aria-selected="false" tabindex="-1">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>Art</button>
+      </div>
+
+      <div class="feature" role="tabpanel" id="p-home" aria-labelledby="t-home">
+        <div>
+          <h3>A Home screen built for <em>play</em></h3>
+          <p>Your recent games sit in one row. Pick one and its title, PLAY button, description and details fill the screen, like a console menu.</p>
+          <ul>
+            <li>Scroll the row with the mouse wheel, the faint bar under it, the arrow keys or a controller.</li>
+            <li>Favourites, a Custom row you order yourself, and sorting by recent, name or time played.</li>
+            <li>Flux tracks your play time and shows when you last played.</li>
+            <li>Pick an accent colour and the PLAY button changes with it.</li>
+          </ul>
+        </div>
+        <div class="art"><img src="assets/details.jpg" width="1600" height="863"alt="A game's details in Flux: description, genre, developer, publisher, release date, tags and store links."></div>
+      </div>
+
+      <div class="feature" role="tabpanel" id="p-library" aria-labelledby="t-library" hidden>
+        <div>
+          <h3>Bring in every <em>store</em></h3>
+          <p>Import the games you already own in one go, then browse them as a grid or a list grouped by platform.</p>
+          <ul>
+            <li>Steam, Epic Games, Xbox app, GOG, Ubisoft Connect, EA app, Battle.net, Amazon Games and Rockstar.</li>
+            <li>Add any other game by dropping in its file or folder.</li>
+            <li>Search everything from the top bar with Ctrl+K.</li>
+            <li>Filters for platform, genre, installed and played.</li>
+          </ul>
+        </div>
+        <div class="art"><div class="placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Library: Grid and List, side by side with one click.</div></div>
+      </div>
+
+      <div class="feature" role="tabpanel" id="p-emulators" aria-labelledby="t-emulators" hidden>
+        <div>
+          <h3>Console games, <em>set up for you</em></h3>
+          <p>Flux installs emulators from their official GitHub releases, spots what a disc image is, and launches it with the right one.</p>
+          <ul>
+            <li>Xbox 360 (Xenia), PlayStation 1, 2 and 3 (DuckStation, PCSX2, RPCS3), PS4 (shadPS4), PSP (PPSSPP) and original Xbox (xemu).</li>
+            <li>Point Flux at your own Switch emulator and it launches your Switch games too.</li>
+            <li>Game patches, mods and save backups for Xbox 360 and PS3 games.</li>
+          </ul>
+          <p class="note">You bring the games: Flux never downloads or includes any.</p>
+        </div>
+        <div class="art"><div class="placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>Tools › Emulators</div></div>
+      </div>
+
+      <div class="feature" role="tabpanel" id="p-minecraft" aria-labelledby="t-minecraft" hidden>
+        <div>
+          <h3>A full Minecraft <em>launcher</em></h3>
+          <p>Every Minecraft section has its own tab: Play, Instances, Browse mods, Skins, Quick Play, Import and Sync.</p>
+          <ul>
+            <li>Mods, resource packs and shaders from Modrinth and CurseForge.</li>
+            <li>Separate instances, each with its own logs, mods and settings.</li>
+            <li>Skins with a 3D preview, and Quick Play straight into a world or server.</li>
+            <li>A Max FPS preset that sets up a fast instance for you.</li>
+          </ul>
+        </div>
+        <div class="art"><img src="assets/minecraft-tabs.jpg" width="1300" height="150" loading="lazy" alt="Flux's top bar with the Minecraft tabs: Play, Instances, Browse mods, Skins, Quick Play, Import and Sync."></div>
+      </div>
+
+      <div class="feature" role="tabpanel" id="p-controllers" aria-labelledby="t-controllers" hidden>
+        <div>
+          <h3>Any controller, <em>everywhere</em></h3>
+          <p>Use Flux from the couch: every menu works with a controller, and PlayStation pads can act as Xbox controllers in any game.</p>
+          <ul>
+            <li>DualSense and DualShock 4 over USB or Bluetooth.</li>
+            <li>Button mapping, presets, stick swap, invert Y and dead zones.</li>
+            <li>A, B, X, Y, the bumpers and triggers all do something on the Home screen.</li>
+          </ul>
+          <p class="note">PlayStation-as-Xbox needs the free ViGEmBus driver. Flux links you to it.</p>
+        </div>
+        <div class="art"><div class="placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 11h4M8 9v4"/><path d="M15 12h.01M18 10h.01"/><path d="M17.3 5H6.7a4 4 0 0 0-3.95 3.4L2 14.5A3 3 0 0 0 5 18c1 0 1.5-.5 2-1l1.4-1.4A2 2 0 0 1 9.8 15h4.4a2 2 0 0 1 1.4.6L17 17c.5.5 1 1 2 1a3 3 0 0 0 3-3.5l-.75-6.1A4 4 0 0 0 17.3 5z"/></svg>Tools › Controllers</div></div>
+      </div>
+
+      <div class="feature" role="tabpanel" id="p-chat" aria-labelledby="t-chat" hidden>
+        <div>
+          <h3>Talk to your <em>friends</em></h3>
+          <p>Chat without leaving Flux. Switch between Flux chat, PlayStation and Xbox in one panel.</p>
+          <ul>
+            <li>Friends lists and messages from PlayStation Network and Xbox.</li>
+            <li>Flux chat with friend requests, built on Matrix.</li>
+            <li>Privacy mode hides friends' names and turns every message into asterisks, for streaming and screen sharing.</li>
+          </ul>
+        </div>
+        <div class="art"><img src="assets/chat.jpg" width="575" height="700" loading="lazy" alt="Flux's chat panel with Flux, PlayStation and Xbox tabs and privacy mode switched on."></div>
+      </div>
+
+      <div class="feature" role="tabpanel" id="p-art" aria-labelledby="t-art" hidden>
+        <div>
+          <h3>Every game looks <em>right</em></h3>
+          <p>Flux finds covers, backgrounds and logos for your games by itself, and lets you pick your own.</p>
+          <ul>
+            <li>Art from Steam, SteamGridDB and other sources online.</li>
+            <li>Choose a tile, background, logo or icon for any game, or use your own picture.</li>
+            <li>Art you choose stays put when Flux refreshes the rest.</li>
+          </ul>
+        </div>
+        <div class="art"><div class="placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>Tools › Art</div></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="wrap">
+    <section aria-labelledby="trust-title">
+      <p class="section-title">Safe to run</p>
+      <h2 class="section-head" id="trust-title">Open, signed, <em>checkable</em></h2>
+      <div class="grid-3">
+        <div class="panel"><h4>Open source</h4><p>All of Flux's code is public on GitHub. Read it, build it yourself, or suggest changes.</p></div>
+        <div class="panel"><h4>Built by GitHub</h4><p>Each release is built by GitHub Actions from the public code, with a provenance record you can check.</p></div>
+        <div class="panel"><h4>Signed updates</h4><p>Flux only installs an update when its signature matches, so nobody can swap in a fake one.</p></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="panel cta">
+        <h2>Ready to <em style="font-style:normal;color:var(--sky)">play</em>?</h2>
+        <div class="actions">
+          <a class="play" href="https://github.com/PineappleJuiceFlavour/flux/releases/latest/download/Flux.exe">Download</a>
+          <a class="ghost" href="https://github.com/PineappleJuiceFlavour/flux/releases" target="_blank" rel="noopener">All releases</a>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Flux Launcher</span>
+    <a href="support.html">Support</a>
+    <a href="https://github.com/PineappleJuiceFlavour/flux/tree/main" target="_blank" rel="noopener">Source</a>
+    <a href="https://github.com/PineappleJuiceFlavour/flux/releases" target="_blank" rel="noopener">Releases</a>
+    <span class="spacer"></span>
+    <span>Free and open source under the MIT license. Not affiliated with Mojang, Microsoft, Sony or Valve.</span>
+  </div>
+</footer>
+
+<script>
+// Feature row: works like Flux's Home row (click, or arrow keys, to select).
+(function () {
+  var row = document.getElementById("row");
+  var tiles = Array.prototype.slice.call(row.querySelectorAll(".tile"));
+  function select(tile, focus) {
+    tiles.forEach(function (t) {
+      var on = t === tile;
+      t.setAttribute("aria-selected", on ? "true" : "false");
+      t.tabIndex = on ? 0 : -1;
+      document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+    });
+    if (focus) tile.focus();
+    var left = tile.offsetLeft - row.offsetLeft - 8;
+    if (left < row.scrollLeft || left + tile.offsetWidth > row.scrollLeft + row.clientWidth) {
+      row.scrollTo({ left: left, behavior: "smooth" });
+    }
+  }
+  tiles.forEach(function (t, i) {
+    t.addEventListener("click", function () { select(t, false); });
+    t.addEventListener("keydown", function (e) {
+      var next = e.key === "ArrowRight" ? i + 1 : e.key === "ArrowLeft" ? i - 1 : e.key === "Home" ? 0 : e.key === "End" ? tiles.length - 1 : -1;
+      if (next >= 0 && next < tiles.length) { e.preventDefault(); select(tiles[next], true); }
+    });
+  });
+  // The mouse wheel over the row scrolls it sideways, as in the app.
+  row.addEventListener("wheel", function (e) {
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && row.scrollWidth > row.clientWidth) {
+      e.preventDefault();
+      row.scrollLeft += e.deltaY;
+    }
+  }, { passive: false });
+})();
+
+// Show the newest version number from GitHub (the download link works without this).
+(function () {
+  try {
+    fetch("https://api.github.com/repos/PineappleJuiceFlavour/flux/releases/latest")
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (rel) {
+        if (!rel || !rel.tag_name) return;
+        document.getElementById("version").textContent = rel.tag_name.replace(/^v/, "Flux ");
+        if (rel.published_at) {
+          document.getElementById("released").textContent = new Date(rel.published_at)
+            .toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+        }
+      })
+      .catch(function () {});
+  } catch (e) {}
+})();
+</script>
+</body>
+</html>

@@ -108,7 +108,7 @@ impl GameKind {
 
     /// Does Flux have its own settings page for this game's emulator (the Graphics tab)?
     pub fn has_emulator_settings(self) -> bool {
-        self == GameKind::Xbox360
+        matches!(self, GameKind::Xbox360 | GameKind::Ps3)
     }
 }
 

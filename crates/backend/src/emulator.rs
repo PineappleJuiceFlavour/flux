@@ -212,3 +212,323 @@ fn extract_7z(bytes: &[u8], into: &Path, file_name: &str) -> Result<(), Arc<str>
     }
     Ok(())
 }
+
+/// Sony's own list of the current PS3 system software (the one a real PS3 checks for updates).
+const PS3_UPDATE_LIST: &str = "http://fus01.ps3.update.playstation.net/update/ps3/list/us/ps3-updatelist.txt";
+
+/// The full PS3 system software in Sony's update list: (version, download address). Only
+/// addresses on PlayStation's update servers are accepted.
+pub fn parse_ps3_update_list(list: &str) -> Option<(String, String)> {
+    list.lines().find_map(|line| {
+        let field = |key: &str| line.split(';').find_map(|f| f.strip_prefix(key)).map(str::to_string);
+        let url = field("CDN=")?;
+        if !url.ends_with("/PS3UPDAT.PUP") || !url.starts_with("http://dus01.ps3.update.playstation.net/") {
+            return None;
+        }
+        // "4.9300" -> "4.93"
+        let version = field("SystemSoftwareVersion=").map(|v| v.trim_end_matches('0').trim_end_matches('.').to_string());
+        Some((version.unwrap_or_else(|| "latest".into()), url))
+    })
+}
+
+impl BackendState {
+    /// Download the PS3 system software from PlayStation's servers and hand it to RPCS3's own
+    /// installer (`rpcs3 --installfw`), which checks the file and installs it.
+    pub async fn install_ps3_firmware(&self, rpcs3_exe: &Path, modal_action: ModalAction) {
+        match self.install_ps3_firmware_inner(rpcs3_exe, &modal_action).await {
+            Ok(version) => {
+                self.send.send_success(format!("PS3 system software {version} downloaded: finish the install in RPCS3"));
+                modal_action.set_finished();
+            },
+            Err(error) => {
+                log::error!("PS3 system software install failed: {error}");
+                modal_action.set_finished_with_error(error);
+            },
+        }
+    }
+
+    async fn install_ps3_firmware_inner(&self, rpcs3_exe: &Path, modal_action: &ModalAction) -> Result<String, Arc<str>> {
+        use std::io::Write;
+
+        if !rpcs3_exe.is_file() {
+            return Err("Install RPCS3 first".into());
+        }
+        let tracker = modal_action.push_tracker(Arc::from("Asking PlayStation for the latest PS3 system software"));
+        tracker.set_total(1);
+        let client = self.http_client_provider.redirecting();
+        let list = client.get(PS3_UPDATE_LIST).send().await
+            .and_then(|r| r.error_for_status()).map_err(|_| Arc::<str>::from("Couldn't reach PlayStation's update server"))?
+            .text().await.map_err(|_| Arc::<str>::from("Couldn't read PlayStation's update list"))?;
+        let (version, url) = parse_ps3_update_list(&list).ok_or_else(|| Arc::<str>::from("PlayStation's update list has no PS3 system software"))?;
+        tracker.add_count(1);
+        tracker.set_finished(ProgressTrackerFinishType::Normal);
+
+        let folder = self.directories.root_launcher_dir.join("emulators").join("ps3-system-software");
+        std::fs::create_dir_all(&folder).map_err(|_| Arc::<str>::from("Couldn't create the download folder"))?;
+        let pup = folder.join("PS3UPDAT.PUP");
+        let part = folder.join("PS3UPDAT.PUP.part");
+
+        let tracker = modal_action.push_tracker(Arc::from(format!("Downloading PS3 system software {version}").as_str()));
+        let mut response = client.get(&url).send().await
+            .and_then(|r| r.error_for_status()).map_err(|_| Arc::<str>::from("Couldn't download the PS3 system software"))?;
+        let expected = response.content_length();
+        tracker.set_total(expected.unwrap_or(0) as usize);
+        let mut file = std::io::BufWriter::new(std::fs::File::create(&part).map_err(|_| Arc::<str>::from("Couldn't save the download"))?);
+        let mut written = 0u64;
+        let mut header = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|_| Arc::<str>::from("The download was interrupted"))? {
+            if modal_action.has_requested_cancel() {
+                drop(file);
+                _ = std::fs::remove_file(&part);
+                return Err("Cancelled".into());
+            }
+            if header.len() < 5 {
+                header.extend_from_slice(&chunk[..chunk.len().min(5 - header.len())]);
+            }
+            file.write_all(&chunk).map_err(|_| Arc::<str>::from("Couldn't save the download (is the disk full?)"))?;
+            written += chunk.len() as u64;
+            tracker.add_count(chunk.len());
+        }
+        file.flush().map_err(|_| Arc::<str>::from("Couldn't save the download"))?;
+        drop(file);
+        // A PUP file starts with "SCEUF"; anything else (an error page, a cut-off file) is thrown away.
+        if header != b"SCEUF" || expected.is_some_and(|n| n != written) {
+            _ = std::fs::remove_file(&part);
+            return Err("The download from PlayStation wasn't a complete PS3 system software file. Try again.".into());
+        }
+        std::fs::rename(&part, &pup).map_err(|_| Arc::<str>::from("Couldn't save the download"))?;
+        tracker.set_finished(ProgressTrackerFinishType::Normal);
+
+        // RPCS3 verifies the file itself and shows its own install progress.
+        let mut command = std::process::Command::new(rpcs3_exe);
+        command.arg("--installfw").arg(&pup);
+        if let Some(dir) = rpcs3_exe.parent() {
+            command.current_dir(dir);
+        }
+        command.spawn().map_err(|e| Arc::<str>::from(format!("Couldn't start RPCS3: {e}").as_str()))?;
+        Ok(version)
+    }
+}
+
+#[cfg(test)]
+mod ps3_firmware_tests {
+    use super::parse_ps3_update_list;
+
+    #[test]
+    fn finds_the_full_system_software() {
+        let list = "# US\nDest=84;CompatibleSystemSoftwareVersion=4.9300-;\n\
+            Dest=84;IncrementalUpdateVersion=00010b72-00010b72;ImageVersion=00010b94;SystemSoftwareVersion=4.9300;CDN=http://dus01.ps3.update.playstation.net/update/ps3/image/us/2026_0318_x/PS3PATCH.PUP;CDN_Timeout=30;\n\
+            Dest=84;ImageVersion=00010b94;SystemSoftwareVersion=4.9300;CDN=http://dus01.ps3.update.playstation.net/update/ps3/image/us/2026_0318_x/PS3UPDAT.PUP;CDN_Timeout=30;\n";
+        let (version, url) = parse_ps3_update_list(list).unwrap();
+        assert_eq!(version, "4.93");
+        assert!(url.ends_with("/2026_0318_x/PS3UPDAT.PUP"));
+    }
+
+    #[test]
+    fn ignores_other_hosts() {
+        assert!(parse_ps3_update_list("Dest=84;SystemSoftwareVersion=4.93;CDN=http://example.com/PS3UPDAT.PUP;").is_none());
+    }
+
+    /// FLUX_PS3FW_TEST=1: read Sony's real list and check the first bytes of the real file.
+    #[test]
+    fn live_update_list() {
+        if std::env::var_os("FLUX_PS3FW_TEST").is_none() {
+            return;
+        }
+        let list = std::process::Command::new("curl").args(["-s", "-m", "30", super::PS3_UPDATE_LIST]).output().unwrap();
+        let (version, url) = parse_ps3_update_list(&String::from_utf8_lossy(&list.stdout)).unwrap();
+        let head = std::process::Command::new("curl").args(["-s", "-m", "30", "-r", "0-4", &url]).output().unwrap();
+        println!("{version} {url}");
+        assert_eq!(head.stdout, b"SCEUF");
+    }
+}
+
+/// One game update in Sony's title-update list (`<package version size sha1sum url>`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ps3TitleUpdate {
+    pub version: String,
+    pub size: u64,
+    pub sha1: String,
+    pub url: String,
+}
+
+/// The updates in a `<serial>-ver.xml` from Sony, oldest first. Only packages on PlayStation's
+/// own download servers are kept.
+pub fn parse_ps3_title_updates(xml: &str) -> Vec<Ps3TitleUpdate> {
+    fn attr(tag: &str, name: &str) -> Option<String> {
+        let start = tag.find(&format!(" {name}=\""))? + name.len() + 3;
+        let end = tag[start..].find('"')? + start;
+        Some(tag[start..end].to_string())
+    }
+    xml.split("<package").skip(1).filter_map(|rest| {
+        let tag = &rest[..rest.find('>')?];
+        let url = attr(tag, "url")?;
+        let host = url.strip_prefix("http://").or_else(|| url.strip_prefix("https://"))?.split('/').next()?;
+        if !host.ends_with(".np.dl.playstation.net") || !url.ends_with(".pkg") {
+            return None;
+        }
+        Some(Ps3TitleUpdate {
+            version: attr(tag, "version")?,
+            size: attr(tag, "size")?.parse().ok()?,
+            sha1: attr(tag, "sha1sum")?.to_lowercase(),
+            url,
+        })
+    }).collect()
+}
+
+/// A PS3 serial: four letters and five digits (BLUS30464).
+pub fn is_ps3_serial(serial: &str) -> bool {
+    serial.len() == 9 && serial[..4].chars().all(|c| c.is_ascii_uppercase()) && serial[4..].chars().all(|c| c.is_ascii_digit())
+}
+
+impl BackendState {
+    /// Download a PS3 game's latest official update from PlayStation's servers, check it against
+    /// Sony's checksum, and hand it to RPCS3's installer (`rpcs3 --installpkg`).
+    pub async fn install_ps3_game_update(&self, serial: &str, installed: Option<&str>, rpcs3_exe: &Path, modal_action: ModalAction) {
+        match self.install_ps3_game_update_inner(serial, installed, rpcs3_exe, &modal_action).await {
+            Ok(text) => {
+                self.send.send_success(text);
+                modal_action.set_finished();
+            },
+            Err(error) => {
+                log::error!("PS3 game update for {serial} failed: {error}");
+                modal_action.set_finished_with_error(error);
+            },
+        }
+    }
+
+    async fn install_ps3_game_update_inner(&self, serial: &str, installed: Option<&str>, rpcs3_exe: &Path, modal_action: &ModalAction) -> Result<String, Arc<str>> {
+        use sha1::Digest;
+        use std::io::{Read, Write};
+
+        if !is_ps3_serial(serial) {
+            return Err("Flux couldn't read this game's serial".into());
+        }
+        if !rpcs3_exe.is_file() {
+            return Err("Install RPCS3 first".into());
+        }
+        let tracker = modal_action.push_tracker(Arc::from("Asking PlayStation for the latest game update"));
+        tracker.set_total(1);
+        // Sony serves this list only over HTTPS signed by its own SHA-1 "SCEI DNAS Root 05", which
+        // no current TLS library accepts, so the certificate isn't checked for this one address.
+        // What it says is still checked: the package must come from PlayStation's servers, and it
+        // is only installed if it matches the list's size and SHA-1.
+        let sony = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .timeout(std::time::Duration::from_secs(30))
+            .build().map_err(|_| Arc::<str>::from("Couldn't start the download"))?;
+        let list_url = format!("https://a0.ww.np.dl.playstation.net/tpl/np/{serial}/{serial}-ver.xml");
+        let response = sony.get(&list_url).send().await.map_err(|_| Arc::<str>::from("Couldn't reach PlayStation's update server"))?;
+        let xml = if response.status().is_success() { response.text().await.unwrap_or_default() } else { String::new() };
+        let Some(update) = parse_ps3_title_updates(&xml).pop() else {
+            return Err("PlayStation has no updates for this game".into());
+        };
+        tracker.add_count(1);
+        tracker.set_finished(ProgressTrackerFinishType::Normal);
+        if installed.is_some_and(|v| v >= update.version.as_str()) {
+            return Ok(format!("{serial} is already up to date ({})", update.version));
+        }
+
+        let folder = self.directories.root_launcher_dir.join("emulators").join("ps3-updates");
+        std::fs::create_dir_all(&folder).map_err(|_| Arc::<str>::from("Couldn't create the download folder"))?;
+        let name = update.url.rsplit('/').next().unwrap_or("update.pkg").to_string();
+        let pkg = folder.join(&name);
+        let part = folder.join(format!("{name}.part"));
+
+        let tracker = modal_action.push_tracker(Arc::from(format!("Downloading update {}", update.version).as_str()));
+        tracker.set_total(update.size as usize);
+        let mut response = self.http_client_provider.redirecting().get(&update.url).send().await
+            .and_then(|r| r.error_for_status()).map_err(|_| Arc::<str>::from("Couldn't download the update"))?;
+        let mut file = std::io::BufWriter::new(std::fs::File::create(&part).map_err(|_| Arc::<str>::from("Couldn't save the download"))?);
+        while let Some(chunk) = response.chunk().await.map_err(|_| Arc::<str>::from("The download was interrupted"))? {
+            if modal_action.has_requested_cancel() {
+                drop(file);
+                _ = std::fs::remove_file(&part);
+                return Err("Cancelled".into());
+            }
+            file.write_all(&chunk).map_err(|_| Arc::<str>::from("Couldn't save the download (is the disk full?)"))?;
+            tracker.add_count(chunk.len());
+        }
+        file.flush().map_err(|_| Arc::<str>::from("Couldn't save the download"))?;
+        drop(file);
+        tracker.set_finished(ProgressTrackerFinishType::Normal);
+
+        // Sony's SHA-1 covers the package without its last 32 bytes (the package's own digest).
+        let tracker = modal_action.push_tracker(Arc::from("Checking the update"));
+        tracker.set_total(1);
+        let check = (|| -> Option<bool> {
+            let len = std::fs::metadata(&part).ok()?.len();
+            if len != update.size || len < 32 {
+                return Some(false);
+            }
+            let mut reader = std::io::BufReader::new(std::fs::File::open(&part).ok()?).take(len - 32);
+            let mut hasher = sha1::Sha1::new();
+            let mut buf = vec![0u8; 1 << 16];
+            loop {
+                let n = reader.read(&mut buf).ok()?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buf[..n]);
+            }
+            Some(hex::encode(hasher.finalize()) == update.sha1)
+        })();
+        if check != Some(true) {
+            _ = std::fs::remove_file(&part);
+            return Err("The update didn't match PlayStation's checksum, so it wasn't installed. Try again.".into());
+        }
+        _ = std::fs::remove_file(&pkg);
+        std::fs::rename(&part, &pkg).map_err(|_| Arc::<str>::from("Couldn't save the download"))?;
+        tracker.add_count(1);
+        tracker.set_finished(ProgressTrackerFinishType::Normal);
+
+        let mut command = std::process::Command::new(rpcs3_exe);
+        command.arg("--installpkg").arg(&pkg);
+        if let Some(dir) = rpcs3_exe.parent() {
+            command.current_dir(dir);
+        }
+        command.spawn().map_err(|e| Arc::<str>::from(format!("Couldn't start RPCS3: {e}").as_str()))?;
+        Ok(format!("Update {} downloaded: RPCS3 is installing it", update.version))
+    }
+}
+
+#[cfg(test)]
+mod ps3_update_tests {
+    use super::*;
+
+    #[test]
+    fn reads_sonys_update_list() {
+        let xml = "<?xml version='1.0' encoding='UTF-8'?>\n<titlepatch status=\"alive\" titleid=\"BLUS30464\"><tag name=\"BLUS30464_T4\" popup=\"true\" signoff=\"true\"><package version=\"01.05\" size=\"34437328\" sha1sum=\"1858889bd6a336a096df1cb20bcf7431094d433c\" url=\"http://b0.ww.np.dl.playstation.net/tppkg/np/BLUS30464/BLUS30464_T4/e401a6be34feeab8/UP0006-BLUS30464_00-SKATE030UPDATE05-A0105-V0100-PE.pkg\" ps3_system_ver=\"03.0000\"><paramsfo><TITLE>Skate 3 DLC</TITLE></paramsfo></package></tag></titlepatch>";
+        let updates = parse_ps3_title_updates(xml);
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].version, "01.05");
+        assert_eq!(updates[0].size, 34437328);
+        assert_eq!(updates[0].sha1, "1858889bd6a336a096df1cb20bcf7431094d433c");
+    }
+
+    #[test]
+    fn ignores_packages_elsewhere() {
+        let xml = "<package version=\"01.05\" size=\"1\" sha1sum=\"00\" url=\"http://example.com/x.pkg\">";
+        assert!(parse_ps3_title_updates(xml).is_empty());
+    }
+
+    #[test]
+    fn serials() {
+        assert!(is_ps3_serial("BLUS30464"));
+        assert!(!is_ps3_serial("BLUS3046"));
+        assert!(!is_ps3_serial("../../etc"));
+    }
+
+    /// FLUX_PS3UPD_TEST=1: Sony's real list for Skate 3, read through the same client settings.
+    #[tokio::test]
+    async fn live_skate3_list() {
+        if std::env::var_os("FLUX_PS3UPD_TEST").is_none() {
+            return;
+        }
+        let sony = reqwest::Client::builder().danger_accept_invalid_certs(true).build().unwrap();
+        let xml = sony.get("https://a0.ww.np.dl.playstation.net/tpl/np/BLUS30464/BLUS30464-ver.xml").send().await.unwrap().text().await.unwrap();
+        let updates = parse_ps3_title_updates(&xml);
+        println!("{updates:?}");
+        assert_eq!(updates.last().unwrap().version, "01.05");
+    }
+}

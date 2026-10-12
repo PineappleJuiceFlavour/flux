@@ -88,7 +88,19 @@ pub fn emulator_card(id: &'static str, backend: BackendHandle, cx: &App) -> AnyE
                 .on_click(move |_, window, cx| crate::open_folder(&folder, window, cx)));
         }
         if id == emulators::RPCS3 {
-            buttons = buttons.child(Button::new("rpcs3-firmware").small().label("Install PS3 system software...")
+            if let Some(rpcs3) = exe.clone() {
+                let backend = backend.clone();
+                let installed = ps3_system_software(&rpcs3);
+                buttons = buttons.child(Button::new("rpcs3-firmware-get").small()
+                    .label(if installed.is_some() { "Update PS3 system software" } else { "Get PS3 system software" })
+                    .when(installed.is_none(), |b| b.primary())
+                    .on_click(move |_, window, cx| {
+                        let modal_action = ModalAction::default();
+                        backend.send(MessageToBackend::InstallPs3Firmware { rpcs3_exe: rpcs3.clone().into(), modal_action: modal_action.clone() });
+                        crate::modals::generic::show_notification(window, cx, "Couldn't get the PS3 system software".into(), modal_action);
+                    }));
+            }
+            buttons = buttons.child(Button::new("rpcs3-firmware").small().label("Install from a file...")
                 .on_click(|_, _, cx| pick_file("Choose PS3UPDAT.PUP (PS3 system software from PlayStation's website)", cx, |pup, cx| {
                     _ = games::open_emulator(emulators::RPCS3, &[OsString::from("--installfw"), pup.into_os_string()], cx);
                 })));
@@ -112,8 +124,23 @@ pub fn emulator_card(id: &'static str, backend: BackendHandle, cx: &App) -> AnyE
             .when(!emu.license.is_empty(), |this| this.child(div().text_xs().text_color(muted).child(emu.license))))
         .child(div().text_sm().text_color(status.1).child(status.0))
         .child(div().text_xs().text_color(muted).child(emu.needs))
+        .when(id == emulators::RPCS3 && ready, |this| {
+            let text = match exe.as_ref().and_then(|e| ps3_system_software(e)) {
+                Some(version) => format!("PS3 system software {version} installed."),
+                None => "PS3 system software isn't installed yet: Get PS3 system software downloads it from PlayStation and installs it.".to_string(),
+            };
+            this.child(div().text_xs().text_color(cx.theme().foreground).child(text))
+        })
         .child(buttons)
         .into_any_element()
+}
+
+/// The PS3 system software version RPCS3 has installed ("4.93"), read from its dev_flash.
+fn ps3_system_software(rpcs3_exe: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(rpcs3_exe.parent()?.join("dev_flash").join("vsh").join("etc").join("version.txt")).ok()?;
+    let release = text.lines().find_map(|l| l.strip_prefix("release:"))?;
+    let version = release.split(':').next()?.trim_start_matches('0');
+    Some(version.trim_end_matches('0').trim_end_matches('.').to_string())
 }
 
 fn id_hash(id: &str) -> usize {

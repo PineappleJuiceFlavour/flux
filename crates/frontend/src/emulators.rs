@@ -41,7 +41,7 @@ pub const EMULATORS: &[EmuDef] = &[
     },
     EmuDef {
         id: RPCS3, name: "RPCS3", consoles: "PlayStation 3", managed: true, exe_prefix: "rpcs3",
-        needs: "The PS3 system software (PS3UPDAT.PUP, free from PlayStation's website); Flux can install it for you.", license: "GPL-2.0",
+        needs: "The PS3 system software, free from PlayStation. Flux downloads it from PlayStation's servers and installs it for you.", license: "GPL-2.0",
     },
     EmuDef {
         id: SHADPS4, name: "shadPS4", consoles: "PlayStation 4", managed: true, exe_prefix: "shadps4",

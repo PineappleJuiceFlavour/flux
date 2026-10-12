@@ -822,7 +822,18 @@ pub struct FileMod {
 }
 
 /// Where a game's files can be replaced: an unpacked Xbox 360 game's folder, or a PS3 game's USRDIR.
-pub fn mod_root(game: &LibraryGame) -> Option<PathBuf> {
+pub fn mod_root(game: &LibraryGame, cx: &App) -> Option<PathBuf> {
+    // Skate 3's maps and DLC-slot mods go where its update and DLC live (dev_hdd0/game/<serial>),
+    // which the game reads ahead of the disc.
+    if game.kind == GameKind::Ps3
+        && let (Some(serial), Some(base)) = (ids(game, cx).serial, rpcs3_dir(cx))
+        && crate::rpcs3_config::is_skate3(&serial)
+    {
+        let hdd = base.join("dev_hdd0").join("game").join(&serial).join("USRDIR");
+        if hdd.is_dir() {
+            return Some(hdd);
+        }
+    }
     match game.kind {
         GameKind::Xbox360 => {
             let folder = if game.path.is_dir() { game.path.clone() } else { game.path.parent()?.to_path_buf() };
@@ -930,8 +941,8 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
 }
 
 /// Switch a file mod on (back up the game's files, copy the mod's in) or off (put them back).
-pub fn set_file_mod(game: &LibraryGame, mods: &[FileMod], id: &str, on: bool) -> Result<Vec<String>, String> {
-    let root = mod_root(game).ok_or("This game's files can't be replaced yet (see File mods)")?;
+pub fn set_file_mod(game: &LibraryGame, mods: &[FileMod], id: &str, on: bool, cx: &App) -> Result<Vec<String>, String> {
+    let root = mod_root(game, cx).ok_or("This game's files can't be replaced yet (see File mods)")?;
     let store = mods_store(game).ok_or("Flux's data folder isn't set up")?.join(id);
     let backups = game.art_dir().ok_or("Flux's data folder isn't set up")?.join("mod-backups").join(id);
     let this = mods.iter().find(|m| m.id == id).ok_or("Unknown mod")?;

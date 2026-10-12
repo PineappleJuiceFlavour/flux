@@ -273,7 +273,7 @@ impl GamePage {
         });
 
         // ---- File mods
-        let root = game_mods::mod_root(game);
+        let root = game_mods::mod_root(game, cx);
         let unpacking = game_mods::UNPACKING.lock().unwrap().iter().find(|e| e.0 == game.id).cloned();
         let mut files_card = card("FILE MODS").child(div().text_sm().text_color(muted).child(
             "Mods that replace the game's own files (textures, models, sounds, maps). Flux keeps a copy of every file a mod replaces, \
@@ -320,7 +320,7 @@ impl GamePage {
                 h_flex().gap_3().items_center().p_3().rounded_lg().bg(background)
                     .child(Switch::new(("file-mod", i)).checked(m.enabled).disabled(running).on_click(cx.listener(move |page, on: &bool, _, cx| {
                         let on = *on;
-                        match game_mods::set_file_mod(&g1, &all, &id, on) {
+                        match game_mods::set_file_mod(&g1, &all, &id, on, cx) {
                             Ok(installed) => {
                                 let n = installed.len();
                                 update_game(&page.id, cx, |g| if let Some(m) = g.file_mods.iter_mut().find(|m| m.id == id) {

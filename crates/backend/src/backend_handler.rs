@@ -104,6 +104,18 @@ impl BackendState {
                     this.install_emulator(&id, modal_action).await;
                 });
             },
+            MessageToBackend::InstallPs3Firmware { rpcs3_exe, modal_action } => {
+                let this = self.clone();
+                tokio::spawn(async move {
+                    this.install_ps3_firmware(&rpcs3_exe, modal_action).await;
+                });
+            },
+            MessageToBackend::InstallPs3GameUpdate { serial, installed, rpcs3_exe, modal_action } => {
+                let this = self.clone();
+                tokio::spawn(async move {
+                    this.install_ps3_game_update(&serial, installed.as_deref(), &rpcs3_exe, modal_action).await;
+                });
+            },
             MessageToBackend::DeleteInstance { id } => {
                 if let Some(instance) = self.instance_state.write().instances.get_mut(id) {
                     let result = std::fs::remove_dir_all(&instance.root_path);

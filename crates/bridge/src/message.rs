@@ -78,6 +78,18 @@ pub enum MessageToBackend {
         id: Arc<str>,
         modal_action: ModalAction,
     },
+    /// Download the PS3 system software from PlayStation and run RPCS3's installer on it.
+    InstallPs3Firmware {
+        rpcs3_exe: Arc<std::path::Path>,
+        modal_action: ModalAction,
+    },
+    /// Download a PS3 game's latest official update from PlayStation and run RPCS3's installer on it.
+    InstallPs3GameUpdate {
+        serial: Arc<str>,
+        installed: Option<Arc<str>>,
+        rpcs3_exe: Arc<std::path::Path>,
+        modal_action: ModalAction,
+    },
     DeleteInstance {
         id: InstanceID,
     },

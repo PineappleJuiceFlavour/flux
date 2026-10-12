@@ -436,6 +436,212 @@ impl GamePage {
             .into_any_element()
     }
 
+    /// A PS3 game's Graphics tab: its official update from PlayStation, RPCS3 presets and settings
+    /// (saved as the game's own RPCS3 config), and for Skate 3 the community fixes and mod tips.
+    fn render_rpcs3_graphics(&mut self, game: &LibraryGame, cx: &mut Context<Self>) -> AnyElement {
+        use crate::rpcs3_config::{self, PRESETS, SETTINGS};
+        let theme = cx.theme();
+        let (muted, border, secondary, secondary_hover, primary) =
+            (theme.muted_foreground, theme.border, theme.secondary, theme.secondary_hover, theme.primary);
+
+        let (Some(base), Some(exe)) = (crate::game_mods::rpcs3_dir(cx), crate::emulators::exe(crate::emulators::RPCS3, cx)) else {
+            return v_flex().p_6().gap_3()
+                .child(div().text_sm().child("Install RPCS3 first (Setup > Install emulator); its settings appear here after that."))
+                .into_any_element();
+        };
+        let ids = crate::game_mods::ids(game, cx);
+        let Some(serial) = ids.serial.clone() else {
+            return v_flex().p_6().gap_3()
+                .child(div().text_sm().child("Flux couldn't read this game's serial (its PS3_GAME/PARAM.SFO). Check the game's location on the Setup tab."))
+                .into_any_element();
+        };
+        let skate3 = rpcs3_config::is_skate3(&serial);
+        let running = self.is_running();
+        let card = |title: &'static str| v_flex().gap_3().p_5().rounded_xl().bg(secondary).border_1().border_color(border)
+            .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BOLD).text_color(crate::pages::home_page::sky()).child(title));
+
+        // ---- The game's official update, straight from PlayStation.
+        let version = ids.app_version.clone();
+        let update = {
+            let backend = self.data.backend_handle.clone();
+            let (serial, installed, exe) = (serial.clone(), version.clone(), exe.clone());
+            card("GAME UPDATE")
+                .child(div().text_sm().text_color(muted).child(match &version {
+                    Some(v) => format!("{serial} · version {v} installed."),
+                    None => format!("{serial} · version unknown."),
+                }))
+                .when(skate3, |this| this.child(div().text_sm().text_color(muted).child(
+                    "Skate 3's community patches (60 FPS, No Blur, widescreen and more) need update 1.05, and online lobbies only match players on the same version.",
+                )))
+                .child(h_flex().gap_2().child(Button::new("ps3-game-update").small().primary().label("Get the latest update from PlayStation")
+                    .disabled(running)
+                    .on_click(move |_, window, cx| {
+                        let modal_action = ModalAction::default();
+                        backend.send(MessageToBackend::InstallPs3GameUpdate {
+                            serial: serial.as_str().into(),
+                            installed: installed.as_deref().map(Into::into),
+                            rpcs3_exe: exe.clone().into(),
+                            modal_action: modal_action.clone(),
+                        });
+                        crate::modals::generic::show_notification(window, cx, "Couldn't get the game update".into(), modal_action);
+                    })))
+                .child(div().text_xs().text_color(muted).child("Downloaded from PlayStation's own servers, checked against Sony's checksum, then installed by RPCS3."))
+        };
+
+        // ---- Presets.
+        let presets = card("QUALITY PRESETS")
+            .child(div().text_sm().text_color(muted).child("One click sets several settings together. They're saved for this game only."))
+            .child(h_flex().gap_3().children(PRESETS.iter().enumerate().filter(|(_, p)| skate3 || !p.2).map(|(i, (name, description, _, _))| {
+                let (name, base, serial) = (*name, base.clone(), serial.clone());
+                v_flex()
+                    .id(("rpcs3-preset", i))
+                    .flex_1()
+                    .min_w_0()
+                    .gap_1()
+                    .p_3()
+                    .rounded_lg()
+                    .cursor_pointer()
+                    .bg(cx.theme().background)
+                    .border_1()
+                    .border_color(border)
+                    .hover(|this| this.bg(secondary_hover).border_color(primary))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(name))
+                    .child(div().text_xs().text_color(muted).child(*description))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.message = Some(match rpcs3_config::apply_preset(&base, &serial, name) {
+                            Ok(()) => (format!("{name} preset saved").into(), false),
+                            Err(e) => (e.into(), true),
+                        });
+                        cx.notify();
+                    }))
+            })));
+
+        // ---- Each setting as a segmented control.
+        let rows = SETTINGS.iter().enumerate().map(|(i, setting)| {
+            let current = rpcs3_config::current(&base, &serial, setting);
+            let group = h_flex()
+                .flex_shrink_0()
+                .p_0p5()
+                .gap_0p5()
+                .rounded_lg()
+                .bg(cx.theme().background)
+                .border_1()
+                .border_color(border)
+                .children(setting.options.iter().enumerate().map(|(j, (label, _))| {
+                    let selected = current.is_some_and(|(c, _)| c == *label);
+                    let (base, serial) = (base.clone(), serial.clone());
+                    div()
+                        .id(("rpcs3-option", i * 16 + j))
+                        .px_3()
+                        .py_1()
+                        .rounded_md()
+                        .text_sm()
+                        .whitespace_nowrap()
+                        .cursor_pointer()
+                        .when(selected, |this| this.bg(primary).text_color(cx.theme().primary_foreground).font_weight(FontWeight::SEMIBOLD))
+                        .when(!selected, |this| this.text_color(muted).hover(|this| this.bg(secondary_hover).text_color(cx.theme().foreground)))
+                        .child(*label)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let setting = &SETTINGS[i];
+                            let option = setting.options[j].0;
+                            this.message = Some(match rpcs3_config::set(&base, &serial, setting, option) {
+                                Ok(()) => (format!("{}: {option} saved", setting.label).into(), false),
+                                Err(e) => (e.into(), true),
+                            });
+                            cx.notify();
+                        }))
+                }));
+            let from_main = current.is_some_and(|(_, own)| !own);
+            h_flex().gap_4().py_2().border_b_1().border_color(border.opacity(0.5))
+                .child(v_flex().flex_1().min_w_0().gap_0p5()
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(setting.label))
+                    .child(div().text_xs().text_color(muted).child(if from_main {
+                        format!("{} (Using RPCS3's main setting.)", setting.help)
+                    } else {
+                        setting.help.to_string()
+                    })))
+                .child(group)
+        });
+        let config_path = rpcs3_config::custom_config_path(&base, &serial);
+        let settings = card("EMULATOR SETTINGS")
+            .child(div().text_sm().text_color(muted).child(if running {
+                "The game is running: changes apply the next time it starts."
+            } else {
+                "Saved for this game only, as its RPCS3 custom configuration. They apply the next time you press PLAY."
+            }))
+            .when_some(self.message.clone(), |this, (text, error)| {
+                this.child(div().text_sm().text_color(if error { cx.theme().danger } else { rgb(0x5ee38a).into() }).child(text))
+            })
+            .children(rows)
+            .when(config_path.is_file(), |this| this.child(h_flex().gap_2().pt_2()
+                .child(Button::new("open-rpcs3-config").label("Open this game's config file").small()
+                    .on_click(move |_, _, cx| cx.open_with_system(&config_path)))));
+
+        // ---- Skate 3: where mods go, the install cache, and the community's tools.
+        let skate3_card = skate3.then(|| {
+            let caches = rpcs3_config::install_caches(&base, &serial);
+            let hdd = base.join("dev_hdd0").join("game").join(&serial).join("USRDIR");
+            let link = |id: &'static str, label: &'static str, url: &'static str| {
+                Button::new(id).small().label(label).on_click(move |_, _, cx| cx.open_url(url))
+            };
+            let clear = {
+                let (base, caches) = (base.clone(), caches.clone());
+                Button::new("skate3-clear-cache").small().label("Clear install cache").disabled(running || caches.is_empty())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        // Moved aside, not deleted: the game rebuilds it on its next start.
+                        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                        let backup = base.join("flux-backups").join(format!("install-cache-{stamp}"));
+                        let result = std::fs::create_dir_all(&backup).map_err(|e| e.to_string()).and_then(|_| {
+                            caches.iter().try_for_each(|c| std::fs::rename(c, backup.join(c.file_name().unwrap_or_default())).map_err(|e| e.to_string()))
+                        });
+                        this.message = Some(match result {
+                            Ok(()) => ("Install cache cleared: Skate 3 rebuilds it the next time it starts".into(), false),
+                            Err(e) => (format!("Couldn't clear the install cache: {e}").into(), true),
+                        });
+                        cx.notify();
+                    }))
+            };
+            card("SKATE 3 MODS")
+                .child(div().text_sm().text_color(muted).child(
+                    "Patches: the Mods tab lists Skate 3's community patches for RPCS3: 60 FPS, No Blur, Aspect Ratio (widescreen; turn on Stretch to window), \
+                     Moon Gravity and No Fall Damage. They need update 1.05.",
+                ))
+                .child(div().text_sm().text_color(muted).child(
+                    "Maps, texture and file mods: add them on the Mods tab under File mods. For Skate 3, Flux puts their files in the game's \
+                     dev_hdd0 USRDIR, where custom parks take over DLC park slots. Flux keeps the originals so a mod can be switched off.",
+                ))
+                .child(div().text_xs().text_color(muted).child(if hdd.is_dir() {
+                    format!("Mod folder: {}", crate::privacy::path(&hdd))
+                } else {
+                    "Install update 1.05 first: it creates the folder mods go in.".to_string()
+                }))
+                .child(div().text_sm().text_color(muted).child(
+                    "Still seeing old files after a mod? Clear the install cache (the game's _INSTALL folder); Skate 3 rebuilds it on its next start.",
+                ))
+                .child(h_flex().gap_2().flex_wrap()
+                    .child(clear)
+                    .child(link("skate3-texture-tools", "Skate 3 Texture Tools", "https://github.com/Shellywell123/Skate-3-Texture-Tools"))
+                    .child(link("skate3-file-manager", "RPCS3 File Manager", "https://github.com/Shellywell123/Skate-3_RPCS3_File_Manager"))
+                    .child(link("skate3-blaze", "Online (Blaze server)", "https://github.com/skate6743/Skate3BlazeServer"))
+                    .child(link("skate3-guide", "Skate 3 on RPCS3 guide", "https://skatemods.com/guides/skate-3-on-rpcs3/")))
+                .child(div().text_xs().text_color(muted).child(
+                    "Online: everyone in a lobby needs the same SPU accuracy, SPU loop detection and physics mods, or you'll desync. The Skate 3 fixes preset sets the community's values.",
+                ))
+        });
+
+        v_flex()
+            .size_full()
+            .p_6()
+            .gap_4()
+            .max_w(px(1000.))
+            .child(update)
+            .child(presets)
+            .child(settings)
+            .children(skate3_card)
+            .overflow_y_scrollbar()
+            .into_any_element()
+    }
+
     fn render_graphics(&mut self, cx: &mut Context<Self>) -> AnyElement {
         use crate::xenia_config::{PRESETS, SETTINGS};
         let theme = cx.theme();
@@ -586,6 +792,7 @@ impl Render for GamePage {
         let content = match self.tab {
             GameTab::Play => self.render_play(&game, window, cx),
             GameTab::Setup => self.render_setup(&game, cx),
+            GameTab::Graphics if game.kind == GameKind::Ps3 => self.render_rpcs3_graphics(&game, cx),
             GameTab::Graphics => self.render_graphics(cx),
             GameTab::Mods => self.render_mods(&game, window, cx),
             GameTab::Debug => self.render_debug(&game, cx),

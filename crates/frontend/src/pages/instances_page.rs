@@ -1,9 +1,9 @@
 //! Minecraft › Instances: the instance you last played as a big card with PLAY, then every instance
-//! as a card with its own play button, and shortcuts to the other Minecraft sections.
+//! as a CurseForge-style square tile with PLAY on hover, and shortcuts to the other Minecraft sections.
 
 use std::collections::HashSet;
 
-use bridge::{instance::{ContentFolder, InstanceID, InstanceStatus}, message::MessageToBackend};
+use bridge::{instance::{ContentFolder, ContentType, InstanceID, InstanceStatus}, message::MessageToBackend};
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Icon, IndexPath, Sizable, button::{Button, ButtonVariants}, h_flex, menu::{ContextMenuExt, DropdownMenu, PopupMenuItem},
@@ -134,22 +134,49 @@ impl InstancesPage {
             .into_any_element()
     }
 
+    /// A CurseForge-style tile: the instance's picture as a rounded square with its loader and
+    /// version in a badge, the name and mod count below, and a Play button over the mod count on hover.
     fn render_card(&self, entry: &InstanceEntry, highlight: bool, cx: &mut Context<Self>) -> AnyElement {
         let (danger, muted) = (cx.theme().danger, cx.theme().muted_foreground);
-        let icon: AnyElement = if let Some(icon) = entry.icon.clone() {
-            let transform = png_render_cache::ImageTransformation::Resize { width: 96, height: 96 };
-            png_render_cache::render_with_transform(icon, transform, cx).size_12().min_w_12().rounded_lg().into_any_element()
+        let config = &entry.configuration;
+        // The instance's own picture (a custom image), else its modpack's picture, else the icon
+        // picked in its settings, else its first letter or digit, on a colour square.
+        let art: AnyElement = if let Some(icon) = entry.icon.clone().or_else(|| modpack_icon(entry, cx)) {
+            let transform = png_render_cache::ImageTransformation::Resize { width: 256, height: 256 };
+            png_render_cache::render_with_transform(icon, transform, cx).size_full().rounded_t(px(11.)).into_any_element()
         } else {
-            div().size_12().min_w_12().rounded_lg().bg(placeholder_color(&entry.name)).into_any_element()
+            let square = div().size_full().rounded_t(px(11.)).flex().items_center().justify_center().bg(placeholder_color(&entry.name));
+            if let Some(path) = entry.configuration.instance_fallback_icon {
+                square.child(Icon::default().path(path.as_str()).size(px(96.)).text_color(white().opacity(0.9))).into_any_element()
+            } else {
+                let letter = entry.name.chars().find(|c| c.is_alphanumeric()).map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+                square.font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BLACK)
+                    .text_size(px(64.)).text_color(white().opacity(0.85)).child(letter)
+                    .into_any_element()
+            }
         };
+        let badge = h_flex().absolute().top_2().right_2().px_2().py_0p5().rounded_md().bg(black().opacity(0.65))
+            .text_xs().font_weight(FontWeight::SEMIBOLD).text_color(white())
+            .child(format!("{} {}", config.loader.pretty_name(), config.minecraft_version.as_str()));
 
+        let group: SharedString = format!("instance-card-{}", entry.id.index).into();
         let running = entry.status != InstanceStatus::NotRunning;
+        let (play_label, play_bg): (&str, Hsla) = match entry.status {
+            InstanceStatus::NotRunning => ("Play", rgb(GREEN).into()),
+            InstanceStatus::Launching => ("Starting", cx.theme().warning),
+            InstanceStatus::Running => ("Stop", danger),
+            InstanceStatus::Stopping => ("Stopping", cx.theme().muted),
+        };
         let play = {
             let (data, id, name, status) = (self.data.clone(), entry.id, entry.name.clone(), entry.status);
-            div().id(("card-play", entry.id.index)).size_8().flex_shrink_0().rounded_full().flex().items_center().justify_center().cursor_pointer()
-                .bg(if running { danger } else if highlight { rgb(GREEN).into() } else { white().opacity(0.08) })
-                .hover(|s| s.opacity(0.85))
-                .child(Icon::new(if running { PandoraIcon::Close } else { PandoraIcon::Play }).size_3p5().text_color(white()))
+            h_flex().id(("card-play", entry.id.index)).absolute().left_3().right_3().top(px(30.)).bottom(px(6.))
+                .gap_1p5().rounded_md().items_center().justify_center().cursor_pointer()
+                .bg(play_bg).hover(|s| s.opacity(0.9)).active(|s| s.opacity(0.8))
+                .text_sm().font_weight(FontWeight::BOLD).text_color(white())
+                .child(Icon::new(if running { PandoraIcon::Close } else { PandoraIcon::Play }).size_3p5())
+                .child(play_label)
+                // Shown on hover, and always while the game runs.
+                .when(!running, |this| this.invisible().group_hover(group.clone(), |s| s.visible()))
                 .on_click(move |_, window, cx| {
                     cx.stop_propagation();
                     play_or_stop(id, name.clone(), status, &data, window, cx);
@@ -159,14 +186,15 @@ impl InstancesPage {
         let open_name = entry.name.clone();
         let menu_entry = entry.clone();
         let data = self.data.clone();
-        h_flex().id(("instance-card", entry.id.index)).p_3().gap_3().items_center().rounded_xl().cursor_pointer()
-            .bg(rgb(0x141826)).border_1().border_color(white().opacity(0.05))
-            .hover(|s| s.bg(rgb(0x1a1f31)).border_color(white().opacity(0.1)))
-            .child(icon)
-            .child(v_flex().flex_1().min_w_0().gap_0p5()
+        v_flex().id(("instance-card", entry.id.index)).group(group.clone()).relative().rounded_xl().overflow_hidden().cursor_pointer()
+            .bg(rgb(0x141826)).border_1().border_color(if highlight { Hsla::from(rgb(GREEN)).opacity(0.55) } else { white().opacity(0.05) })
+            .hover(|s| s.bg(rgb(0x1a1f31)).border_color(white().opacity(0.14)))
+            // GPUI doesn't clip children to rounded corners: the picture rounds its own top corners.
+            .child(div().relative().w_full().aspect_square().rounded_t(px(11.)).overflow_hidden().child(art).child(badge))
+            .child(v_flex().relative().h(px(64.)).px_3().pt_2().gap_0p5()
                 .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).overflow_hidden().whitespace_nowrap().text_ellipsis().child(entry.name.clone()))
-                .child(div().text_xs().text_color(muted).overflow_hidden().whitespace_nowrap().text_ellipsis().child(details(entry, cx))))
-            .child(play)
+                .child(div().text_xs().text_color(muted).overflow_hidden().whitespace_nowrap().text_ellipsis().child(details(entry, cx)))
+                .child(play))
             .on_click(move |_, window, cx| open_instance(open_name.clone(), window, cx))
             .context_menu(move |menu, _, _| {
                 let open = menu_entry.name.clone();
@@ -184,6 +212,14 @@ impl InstancesPage {
 /// The instance played most recently, if any has been played.
 fn last_played(entries: &[InstanceEntry]) -> Option<&InstanceEntry> {
     entries.iter().filter(|e| e.playtime.last_played_unix_ms.is_some()).max_by_key(|e| e.playtime.last_played_unix_ms)
+}
+
+/// The picture of the Modrinth or CurseForge modpack installed in this instance, if any.
+fn modpack_icon(entry: &InstanceEntry, cx: &App) -> Option<schema::unique_bytes::UniqueBytes> {
+    let mods = entry.content[ContentFolder::Mods].read(cx).as_ref()?;
+    mods.iter()
+        .filter(|c| matches!(c.content_summary.extra, ContentType::ModrinthModpack { .. } | ContentType::CurseforgeModpack { .. }))
+        .find_map(|c| c.content_summary.png_icon.clone())
 }
 
 /// "Fabric 26.3 · 42 mods", "Vanilla 26.3".
@@ -270,19 +306,20 @@ impl Render for InstancesPage {
             .child(create("new-instance", "+ New instance", false, self.data.clone()).primary())
             .child(create("max-fps-instance", "Max FPS setup", true, self.data.clone()));
 
-        // Instance cards, then a card for making a new one.
+        // Instance tiles in a square grid, then a tile for making a new one.
         let width = window.viewport_size().width;
-        let cols = ((f32::from(width) - 48.) / 280.).floor().clamp(1., 4.) as u16;
+        let cols = ((f32::from(width) - 48.) / 190.).floor().clamp(2., 8.) as u16;
         let mut grid = div().grid().grid_cols(cols).gap_3().w_full();
         for entry in &shown {
             let highlight = hero.as_ref().is_some_and(|h| h.id == entry.id);
             grid = grid.child(self.render_card(entry, highlight, cx));
         }
         let data = self.data.clone();
-        grid = grid.child(h_flex().id("new-instance-card").p_3().gap_3().items_center().rounded_xl().cursor_pointer().min_h(px(74.))
+        grid = grid.child(v_flex().id("new-instance-card").rounded_xl().overflow_hidden().cursor_pointer()
             .border_1().border_dashed().border_color(white().opacity(0.22)).hover(|s| s.bg(white().opacity(0.04)))
-            .child(div().size_12().flex().items_center().justify_center().child(Icon::new(PandoraIcon::Plus).size_5().text_color(muted)))
-            .child(v_flex().gap_0p5()
+            .child(div().w_full().aspect_square().flex().items_center().justify_center()
+                .child(Icon::new(PandoraIcon::Plus).size_10().text_color(muted)))
+            .child(v_flex().h(px(64.)).px_3().pt_2().gap_0p5()
                 .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("New instance"))
                 .child(div().text_xs().text_color(muted).child("Any version, any loader")))
             .on_click(move |_, window, cx| {

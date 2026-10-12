@@ -3200,6 +3200,16 @@ impl Interactivity {
         _cx: &mut App,
     ) {
         if let Some(scroll_offset) = self.scroll_offset.clone() {
+            // Flux: one frame of a mouse-wheel glide started below.
+            if smooth_scroll::step(&scroll_offset) {
+                window.request_animation_frame();
+            }
+            let rem_size = window.rem_size();
+            let padding = style.padding.to_pixels(hitbox.bounds.size.into(), rem_size);
+            let padded_content_size = self.content_size
+                + size(padding.left + padding.right, padding.top + padding.bottom);
+            let scroll_max = Point::from(padded_content_size - hitbox.bounds.size)
+                .max(&Default::default());
             let ongoing_scroll = self.ongoing_scroll.clone();
             let overflow = style.overflow;
             let allow_concurrent_scroll = style.allow_concurrent_scroll;
@@ -3209,6 +3219,7 @@ impl Interactivity {
             let current_view = window.current_view();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
+                    let scroll_offset_rc = scroll_offset.clone();
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
                     let mut delta = event.delta.pixel_delta(line_height);
@@ -3247,10 +3258,26 @@ impl Interactivity {
                             delta_x = Pixels::ZERO;
                         }
                     }
-                    scroll_offset.y += delta_y;
-                    scroll_offset.x += delta_x;
-                    if *scroll_offset != old_scroll_offset {
-                        cx.notify(current_view);
+                    if event.delta.precise() {
+                        smooth_scroll::cancel(&scroll_offset_rc);
+                        scroll_offset.y += delta_y;
+                        scroll_offset.x += delta_x;
+                        if *scroll_offset != old_scroll_offset {
+                            cx.notify(current_view);
+                        }
+                    } else {
+                        // Flux: a mouse wheel notch glides there over a few frames
+                        // instead of jumping (a touchpad is already smooth).
+                        let from = smooth_scroll::target(&scroll_offset_rc, old_scroll_offset)
+                            .unwrap_or(old_scroll_offset);
+                        let to = point(
+                            (from.x + delta_x).clamp(-scroll_max.x, px(0.)),
+                            (from.y + delta_y).clamp(-scroll_max.y, px(0.)),
+                        );
+                        if to != from {
+                            smooth_scroll::start(&scroll_offset_rc, old_scroll_offset, to);
+                            cx.notify(current_view);
+                        }
                     }
                 }
             });
@@ -5200,5 +5227,117 @@ mod tests {
         assert_eq!(bounds("cell-0").origin.x, px(0.));
         assert_eq!(bounds("cell-1").origin.x, px(100.));
         assert_eq!(bounds("cell-2").origin.x, px(300.));
+    }
+}
+
+/// Flux: smooth mouse-wheel scrolling. A wheel notch sets a target and the offset eases
+/// towards it over a few frames (the same speed at any frame rate). Anything else that
+/// moves the offset (a scrollbar drag, `scroll_to_item`, a touchpad) takes over at once.
+pub(crate) mod smooth_scroll {
+    use crate::{Pixels, Point, point, px};
+    use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Instant};
+
+    struct Glide {
+        target: Point<Pixels>,
+        /// The offset this glide last wrote; if it changed since, someone else moved it.
+        written: Point<Pixels>,
+        tick: Instant,
+    }
+
+    thread_local! {
+        static GLIDES: RefCell<HashMap<usize, Glide>> = RefCell::new(HashMap::new());
+    }
+
+    fn key(offset: &Rc<RefCell<Point<Pixels>>>) -> usize {
+        Rc::as_ptr(offset) as usize
+    }
+
+    /// Where the running glide is heading, if it's still in charge of this offset.
+    pub fn target(offset: &Rc<RefCell<Point<Pixels>>>, now: Point<Pixels>) -> Option<Point<Pixels>> {
+        GLIDES.with(|g| {
+            g.borrow()
+                .get(&key(offset))
+                .filter(|glide| glide.written == now)
+                .map(|glide| glide.target)
+        })
+    }
+
+    pub fn start(offset: &Rc<RefCell<Point<Pixels>>>, written: Point<Pixels>, target: Point<Pixels>) {
+        GLIDES.with(|g| {
+            let mut g = g.borrow_mut();
+            let tick = g
+                .get(&key(offset))
+                .filter(|glide| glide.written == written)
+                .map(|glide| glide.tick)
+                .unwrap_or_else(Instant::now);
+            g.insert(key(offset), Glide { target, written, tick });
+        });
+    }
+
+    thread_local! {
+        static LIST_GLIDES: RefCell<HashMap<usize, (Pixels, Instant)>> = RefCell::new(HashMap::new());
+    }
+
+    /// A `gpui::list` wheel notch: add it to what's still left to scroll.
+    pub fn list_push(key: usize, delta: Pixels) {
+        LIST_GLIDES.with(|g| {
+            let mut g = g.borrow_mut();
+            let entry = g.entry(key).or_insert((px(0.), Instant::now()));
+            entry.0 += delta;
+        });
+    }
+
+    /// The part of a `gpui::list` glide to scroll this frame, if any is left.
+    pub fn list_step(key: usize) -> Option<Pixels> {
+        LIST_GLIDES.with(|g| {
+            let mut g = g.borrow_mut();
+            let (left, tick) = g.get_mut(&key)?;
+            let now = Instant::now();
+            let dt = now.duration_since(*tick).as_secs_f32().min(0.1);
+            *tick = now;
+            let mut step = *left * (1. - (-dt * 16.).exp());
+            if (*left - step).abs() < px(0.5) {
+                step = *left;
+                g.remove(&key);
+            } else {
+                *left -= step;
+            }
+            Some(step)
+        })
+    }
+
+    pub fn cancel(offset: &Rc<RefCell<Point<Pixels>>>) {
+        GLIDES.with(|g| g.borrow_mut().remove(&key(offset)));
+    }
+
+    /// Moves the offset one frame along its glide; true while more frames are needed.
+    pub fn step(offset: &Rc<RefCell<Point<Pixels>>>) -> bool {
+        GLIDES.with(|g| {
+            let mut g = g.borrow_mut();
+            let k = key(offset);
+            let Some(glide) = g.get_mut(&k) else { return false };
+            let mut current = offset.borrow_mut();
+            if *current != glide.written {
+                g.remove(&k);
+                return false;
+            }
+            let now = Instant::now();
+            let dt = now.duration_since(glide.tick).as_secs_f32().min(0.1);
+            glide.tick = now;
+            let ease = 1. - (-dt * 16.).exp();
+            let next = point(
+                current.x + (glide.target.x - current.x) * ease,
+                current.y + (glide.target.y - current.y) * ease,
+            );
+            let left = glide.target - next;
+            if left.x.abs() < px(0.5) && left.y.abs() < px(0.5) {
+                *current = glide.target;
+                g.remove(&k);
+                return true;
+            }
+            *current = next;
+            glide.written = next;
+            true
+        })
     }
 }

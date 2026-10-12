@@ -1597,9 +1597,28 @@ impl Element for List {
         let height = bounds.size.height;
         let scroll_top = prepaint.layout.scroll_top;
         let hitbox_id = prepaint.hitbox.id;
+        // Flux: one frame of a mouse-wheel glide (see `div::smooth_scroll`).
+        let glide_key = Rc::as_ptr(&list_state.0) as usize;
+        if let Some(step) = crate::elements::div::smooth_scroll::list_step(glide_key) {
+            list_state.0.borrow_mut().scroll(
+                &scroll_top,
+                height,
+                point(px(0.), step),
+                current_view,
+                window,
+                cx,
+            );
+            window.request_animation_frame();
+        }
         let mut accumulated_scroll_delta = ScrollDelta::default();
         window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
             if phase == DispatchPhase::Bubble && hitbox_id.should_handle_scroll(window) {
+                if !event.delta.precise() {
+                    let delta = event.delta.pixel_delta(px(20.));
+                    crate::elements::div::smooth_scroll::list_push(glide_key, delta.y);
+                    cx.notify(current_view);
+                    return;
+                }
                 accumulated_scroll_delta = accumulated_scroll_delta.coalesce(event.delta);
                 let pixel_delta = accumulated_scroll_delta.pixel_delta(px(20.));
                 list_state.0.borrow_mut().scroll(

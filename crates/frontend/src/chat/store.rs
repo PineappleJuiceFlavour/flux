@@ -11,9 +11,14 @@ pub struct Saved {
     /// PlayStation refresh token (lasts about two months).
     #[serde(default)]
     pub psn_refresh: Option<String>,
-    /// Xbox was connected (it uses the Microsoft sign-in, nothing to keep here).
+    /// Xbox chat was connected.
     #[serde(default)]
     pub xbox: bool,
+    /// Xbox chat's Microsoft sign-in (as the Xbox app) and this PC's key for it.
+    #[serde(default)]
+    pub xbox_refresh: Option<String>,
+    #[serde(default)]
+    pub xbox_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

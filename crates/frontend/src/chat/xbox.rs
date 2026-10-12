@@ -25,12 +25,43 @@ static PASS: Mutex<Option<Pass>> = Mutex::const_new(None);
 static CONVERSATIONS: std::sync::LazyLock<Mutex<std::collections::HashMap<String, String>>> = std::sync::LazyLock::new(Default::default);
 static POLLING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// A pass from Xbox chat's own sign-in (as the Xbox app; see `xbox_auth`).
 async fn fetch_pass() -> Result<Pass, String> {
-    let Some(backend) = crate::games::backend() else { return Err("Flux isn't ready yet".into()) };
-    let (send, recv) = tokio::sync::oneshot::channel();
-    backend.send(bridge::message::MessageToBackend::XboxLiveToken { result: send });
-    let token = recv.await.map_err(|_| "Flux stopped".to_string())?.map_err(|e| e.to_string())?;
-    Ok(Pass { authorization: token.authorization.to_string(), xuid: token.xuid.to_string(), fetched: Instant::now() })
+    let saved = store::load();
+    let (Some(refresh), Some(key)) = (saved.xbox_refresh, saved.xbox_key) else {
+        return Err("Connect Xbox chat first".into());
+    };
+    let (pass, refresh) = super::xbox_auth::pass(&refresh, &key).await?;
+    store::edit(|s| s.xbox_refresh = Some(refresh));
+    Ok(Pass { authorization: pass.authorization, xuid: pass.xuid, fetched: Instant::now() })
+}
+
+/// Sign in to Xbox chat: show a code to enter at microsoft.com/link, wait, then connect.
+pub async fn sign_in() {
+    update(NET, |s| {
+        s.connecting = true;
+        s.error = None;
+        s.notice = None;
+    });
+    let code = match super::xbox_auth::start_sign_in().await {
+        Ok(code) => code,
+        Err(e) => return fail(NET, e),
+    };
+    update(NET, |s| s.sign_in_code = Some((code.user_code.clone(), code.link.clone())));
+    _ = open::that_detached(&code.link);
+    let result = super::xbox_auth::finish_sign_in(&code).await;
+    update(NET, |s| s.sign_in_code = None);
+    match result.and_then(|refresh| super::xbox_auth::new_key().map(|key| (refresh, key))) {
+        Ok((refresh, key)) => {
+            store::edit(|s| {
+                s.xbox_refresh = Some(refresh);
+                s.xbox_key = Some(key);
+            });
+            *PASS.lock().await = None;
+            connect().await;
+        },
+        Err(e) => fail(NET, e),
+    }
 }
 
 /// The Xbox Live pass (renewed every few hours).
@@ -115,7 +146,11 @@ pub fn disconnect() {
     super::spawn(async {
         *PASS.lock().await = None;
     });
-    store::edit(|s| s.xbox = false);
+    store::edit(|s| {
+        s.xbox = false;
+        s.xbox_refresh = None;
+        s.xbox_key = None;
+    });
     update(NET, |s| *s = Default::default());
 }
 

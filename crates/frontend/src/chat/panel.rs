@@ -286,8 +286,19 @@ impl ChatPanel {
                 .into_any_element(),
             Network::Xbox => card
                 .child(heading("Xbox chat"))
-                .child(step("Uses the Microsoft account you're signed into Flux with: your Xbox friends, their status and your messages."))
-                .child(Button::new("connect-xbox").primary().label(if busy { "Connecting..." } else { "Connect Xbox" }).disabled(busy)
+                .child(div().p_2().rounded_md().bg(rgb(0x5a3b00).opacity(0.5)).text_xs().child(
+                    "Heads up: Xbox only delivers messages from its own apps, so Flux signs in to Xbox chat the way the Xbox app does (not an official API for other apps). It can stop working when Microsoft changes it, and Microsoft could notice an unusual app on your account. The sign-in stays on this PC, in Windows Credential Manager.",
+                ))
+                .child(step("Click below, then sign in with your Microsoft account at microsoft.com/link using the code Flux shows. Your friends, their status and your messages then work here, and messages you send arrive in the Xbox app."))
+                .children(state.sign_in_code.clone().map(|(code, link)| v_flex().gap_1p5().p_3().rounded_lg().bg(gpui::white().opacity(0.06))
+                    .child(div().text_xs().text_color(muted).child("Enter this code at microsoft.com/link (opened in your browser):"))
+                    .child(div().font_family(DISPLAY_FONT).font_weight(FontWeight::BLACK).text_size(px(28.)).child(code))
+                    .child(div().id("xbox-link").text_sm().text_color(sky).cursor_pointer().hover(|s| s.underline())
+                        .child("Open microsoft.com/link again")
+                        .on_click(move |_, _, cx| cx.open_url(&link)))))
+                .child(Button::new("connect-xbox").primary()
+                    .label(if state.sign_in_code.is_some() { "Waiting for you to sign in..." } else if busy { "Connecting..." } else { "Connect Xbox chat" })
+                    .disabled(busy)
                     .on_click(|_, _, _| super::connect_xbox()))
                 .into_any_element(),
         }

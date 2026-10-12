@@ -2651,6 +2651,7 @@ dependencies = [
  "relative-path",
  "reqwest",
  "reqwest_client",
+ "ring",
  "rust-embed",
  "rustc-hash 2.1.3",
  "sanitize-filename",

@@ -12,6 +12,7 @@ pub mod panel;
 pub mod psn;
 mod store;
 pub mod xbox;
+pub mod xbox_auth;
 
 use std::{
     collections::HashMap,
@@ -85,6 +86,8 @@ pub struct NetState {
     pub notice: Option<String>,
     /// Friends with messages you haven't opened.
     pub unread: Vec<String>,
+    /// A sign-in waiting for a code to be entered: (code, link that fills it in).
+    pub sign_in_code: Option<(String, String)>,
 }
 
 static STATE: LazyLock<Mutex<HashMap<Network, NetState>>> = LazyLock::new(Default::default);
@@ -180,7 +183,7 @@ pub fn start() {
     if let Some(refresh) = saved.psn_refresh {
         spawn(psn::resume(refresh));
     }
-    if saved.xbox {
+    if saved.xbox && saved.xbox_refresh.is_some() {
         spawn(xbox::connect());
     }
 }
@@ -196,7 +199,7 @@ pub fn connect_playstation(npsso: String) {
 }
 
 pub fn connect_xbox() {
-    spawn(xbox::connect());
+    spawn(xbox::sign_in());
 }
 
 pub fn disconnect(network: Network) {

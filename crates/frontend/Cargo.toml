@@ -29,6 +29,7 @@ intrusive-collections.workspace = true
 atomic-time.workspace = true
 reqwest_client.workspace = true
 reqwest.workspace = true
+ring = "0.17.14"
 uuid.workspace = true
 enumset.workspace = true
 serde.workspace = true

@@ -53,7 +53,43 @@
         <div class="fact"><span class="k">Updates</span><span class="v">Built in, signed</span></div>
         <div class="fact"><span class="k">License</span><span class="v">MIT</span></div>
       </div>
-      <div class="shot hero-shot"><img src="assets/home.jpg" width="1600" height="863" alt="Flux's Home screen: a row of game tiles across the top, the selected game's title, PLAY button, description and details below."></div>
+      <div class="demo shot hero-shot" id="demo" role="region" aria-label="Try Flux's Home screen">
+        <div class="demo-bar" aria-hidden="true">
+          <img src="assets/logo.png" alt="" class="demo-logo">
+          <span class="demo-tab on">Home</span><span class="demo-tab">Library</span><span class="demo-tab">Minecraft</span><span class="demo-tab">Friends</span>
+          <span class="demo-search">Search games, instances, settings</span>
+          <span class="demo-right"><span>Import games</span><span>Tools</span><span class="demo-avatar"></span><span>Player</span></span>
+        </div>
+        <div class="demo-body" id="demo-body">
+          <div class="demo-bg" aria-hidden="true"><img id="demo-hero" alt=""></div>
+          <div class="demo-cover" aria-hidden="true"><img id="demo-cover" alt=""></div>
+          <div class="demo-toolbar"><span class="demo-chip">Filters</span><span class="demo-count">Top 5 on Steam today</span><span class="demo-add">+ Add game</span></div>
+          <div class="demo-row" id="demo-row" role="listbox" aria-label="Games" tabindex="0"></div>
+          <div class="demo-rowbar" aria-hidden="true"><span id="demo-thumb"></span></div>
+          <div class="demo-main">
+            <div class="demo-title" id="demo-title"></div>
+            <div class="demo-name" id="demo-name"></div>
+            <div class="demo-meta" id="demo-meta"></div>
+            <div class="demo-actions" aria-hidden="true">
+              <span class="demo-play">PLAY</span><span class="demo-btn">Options</span><span class="demo-btn">☆ Add to favourites</span>
+            </div>
+            <p class="demo-desc" id="demo-desc"></p>
+            <div class="demo-facts" id="demo-facts"></div>
+          </div>
+          <div class="demo-details">
+            <div class="demo-list">
+              <div class="demo-label">Details</div>
+              <dl id="demo-dl"></dl>
+            </div>
+            <div class="demo-about">
+              <div class="demo-label">Description</div>
+              <p id="demo-long"></p>
+              <p class="demo-from">From Steam</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="note demo-note">Try it: click a game, use the arrow keys, or scroll. These are the five most played games on Steam today.</p>
     </section>
   </div>
 
@@ -90,7 +126,26 @@
             <li>Pick an accent colour and the PLAY button changes with it.</li>
           </ul>
         </div>
-        <div class="art"><img src="assets/details.jpg" width="1600" height="863"alt="A game's details in Flux: description, genre, developer, publisher, release date, tags and store links."></div>
+        <div class="art controls">
+          <div class="controls-head">On the Home screen</div>
+          <div class="controls-grid">
+            <div class="controls-col">
+              <div class="controls-label">Mouse &amp; keyboard</div>
+              <div class="key-row"><span class="key">Wheel</span><span>Move along the row</span></div>
+              <div class="key-row"><span class="key">← →</span><span>Pick a game</span></div>
+              <div class="key-row"><span class="key">Enter</span><span>Play</span></div>
+              <div class="key-row"><span class="key">Ctrl K</span><span>Search everything</span></div>
+            </div>
+            <div class="controls-col">
+              <div class="controls-label">Controller</div>
+              <div class="key-row"><span class="key pad">A</span><span>Play / open</span></div>
+              <div class="key-row"><span class="key pad">Y</span><span>Favourite</span></div>
+              <div class="key-row"><span class="key pad">X</span><span>Options</span></div>
+              <div class="key-row"><span class="key">LB / RB</span><span>Home · Library · List</span></div>
+            </div>
+          </div>
+          <a class="controls-try" href="#demo" target="_self">Try the Home screen at the top of the page ↑</a>
+        </div>
       </div>
 
       <div class="feature" role="tabpanel" id="p-library" aria-labelledby="t-library" hidden>
@@ -258,6 +313,166 @@
           document.getElementById("released").textContent = new Date(rel.published_at)
             .toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
         }
+      })
+      .catch(function () {});
+  } catch (e) {}
+})();
+</script>
+<script>
+// Home-screen demo: Flux's Home row with the five most played games on Steam (refreshed daily into
+// top-games.json by the site's GitHub workflow). Visitors can pick games and scroll; nothing else works.
+(function () {
+  var FALLBACK = {"source":"Steam most played","games":[{"appid":730,"name":"Counter-Strike 2","description":"For over two decades, Counter-Strike has offered an elite competitive experience, one shaped by millions of players from across the globe. And now the next chapter in the CS story is about to begin. This is Counter-Strike 2.","genres":["Action","Free To Play"],"developer":"Valve","publisher":"Valve","released":"Aug 21, 2012","free":true,"peak":1404227,"cover":"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/730/library_600x900.jpg","hero":"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/730/library_hero.jpg","logo":"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/730/logo.png"},{"appid":570,"name":"Dota 2","description":"Every day, millions of players worldwide enter battle as one of over a hundred Dota heroes. And no matter if it's their 10th hour of play or 1,000th, there's always something new to discover. With regular updates that ensure a constant evolution of gameplay, features, and heroes, Dota 2 has taken on a life of its own.","genres":["Action","Strategy","Free To Play"],"developer":"Valve","publisher":"Valve","released":"Jul 9, 2013","free":true,"peak":1034502,"cover":"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/570/library_600x900.jpg","hero":"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/570/library_hero.jpg","logo":"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/570/logo.png"},{"appid":578080,"name":"PUBG: BATTLEGROUNDS","description":"PUBG: BATTLEGROUNDS, the high-stakes winner-take-all shooter that started the Battle Royale craze, is free-to-play! Drop into diverse maps, loot unique weapons and supplies, and survive in an ever-shrinking zone where every turn could be your last.","genres":["Action","Adventure","Massively Multiplayer"],"developer":"PUBG Corporation","publisher":"KRAFTON, Inc.","released":"Dec 21, 2017","free":true,"peak":713683,"cover":"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/578080/library_600x900.jpg","hero":"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/578080/library_hero.jpg","logo":"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/578080/logo.png"},{"appid":1422450,"name":"Deadlock","description":"Deadlock is a multiplayer game in early development.","genres":["Action"],"developer":"Valve","publisher":"Valve","released":"To be announced","free":false,"peak":220575,"cover":"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/1422450/library_600x900.jpg","hero":"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/1422450/library_hero.jpg","logo":"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/1422450/logo.png"},{"appid":3393110,"name":"AION 2","description":"AION 2 is the only MMORPG built around a world where the sky is the battlefield. Choose your faction, ascend as a Daeva, and fight a faction war across a world 36 times larger than the original. PC only, on Unreal Engine 5.","genres":["Action","Adventure","Massively Multiplayer"],"developer":"NC","publisher":"NC","released":"Oct 5, 2026","free":true,"peak":392300,"cover":"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/3393110/10aa4b096ebe6af0d1dd7882e5ba004271aef6f7/header.jpg?t=1791504829","hero":"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/3393110/10aa4b096ebe6af0d1dd7882e5ba004271aef6f7/header.jpg?t=1791504829","logo":null}]};
+  var demo = document.getElementById("demo");
+  if (!demo) return;
+  var row = document.getElementById("demo-row");
+  var body = document.getElementById("demo-body");
+  var thumb = document.getElementById("demo-thumb");
+  var games = [];
+  var selected = 0;
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function people(n) {
+    if (!n) return "—";
+    return n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M" : n >= 1e3 ? Math.round(n / 1e3) + "K" : String(n);
+  }
+  function year(date) {
+    var m = /(\d{4})/.exec(date || "");
+    return m ? m[1] : "";
+  }
+  // Steam's descriptions can carry HTML entities; show them as text.
+  function plain(s) {
+    var t = document.createElement("textarea");
+    t.innerHTML = s || "";
+    return t.value;
+  }
+
+  function show() {
+    var g = games[selected];
+    if (!g) return;
+    Array.prototype.forEach.call(row.children, function (tile, i) {
+      tile.setAttribute("aria-selected", i === selected ? "true" : "false");
+    });
+    document.getElementById("demo-hero").src = g.hero || g.cover || "";
+    document.getElementById("demo-cover").src = g.cover || "";
+
+    var title = document.getElementById("demo-title");
+    title.textContent = "";
+    if (g.logo) {
+      var logo = el("img");
+      logo.src = g.logo;
+      logo.alt = g.name;
+      logo.onerror = function () { title.textContent = ""; textTitle(title, g.name); };
+      title.appendChild(logo);
+    } else {
+      textTitle(title, g.name);
+    }
+    document.getElementById("demo-name").textContent = g.name;
+    document.getElementById("demo-meta").textContent = ["PC", (g.genres || [])[0], year(g.released)].filter(Boolean).join("  ·  ");
+    var desc = plain(g.description);
+    document.getElementById("demo-desc").textContent = desc;
+    document.getElementById("demo-long").textContent = desc;
+
+    var facts = document.getElementById("demo-facts");
+    facts.textContent = "";
+    [["Time played", "Not played"], ["Last played", "Never"], ["Genre", (g.genres || [])[0] || "—"],
+     ["Developer", g.developer || "—"], ["Released", g.released || "—"], ["Playing today", people(g.peak) + " peak"]]
+      .forEach(function (f) {
+        var d = el("div", "demo-fact");
+        d.appendChild(el("span", "k", f[0]));
+        d.appendChild(el("span", "v", f[1]));
+        facts.appendChild(d);
+      });
+
+    var dl = document.getElementById("demo-dl");
+    dl.textContent = "";
+    [["Time played", "Not played"], ["Last played", "Never"], ["Library", "Steam"], ["Platform", "PC"],
+     ["Genre", (g.genres || []).join(", ") || "—"], ["Developer", g.developer || "—"], ["Publisher", g.publisher || "—"],
+     ["Release date", g.released || "—"], ["Price", g.free ? "Free to play" : "Paid"]]
+      .forEach(function (f) {
+        dl.appendChild(el("dt", null, f[0]));
+        dl.appendChild(el("dd", null, f[1]));
+      });
+    // Restart the title's slide-in, like the app.
+    var main = demo.querySelector(".demo-main");
+    main.classList.remove("in");
+    void main.offsetWidth;
+    main.classList.add("in");
+  }
+  function textTitle(node, name) {
+    var words = name.split(" ");
+    var last = words.pop();
+    node.appendChild(document.createTextNode(words.length ? words.join(" ") + " " : ""));
+    node.appendChild(el("em", null, last));
+    node.classList.add("text");
+  }
+
+  function select(i, focusTile) {
+    selected = (i + games.length) % games.length;
+    show();
+    var tile = row.children[selected];
+    if (tile && tile.scrollIntoView) tile.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+    bar();
+  }
+
+  function bar() {
+    var max = row.scrollWidth - row.clientWidth;
+    thumb.parentNode.style.visibility = max > 2 ? "visible" : "hidden";
+    if (max <= 2) return;
+    var w = row.clientWidth / row.scrollWidth;
+    thumb.style.width = (w * 100) + "%";
+    thumb.style.left = ((1 - w) * (row.scrollLeft / max) * 100) + "%";
+  }
+
+  function build(list) {
+    games = list.slice(0, 5);
+    row.textContent = "";
+    games.forEach(function (g, i) {
+      var tile = el("div", "demo-tile");
+      tile.setAttribute("role", "option");
+      tile.title = g.name;
+      var img = el("img");
+      img.src = g.cover || g.hero || "";
+      img.alt = g.name;
+      img.loading = "eager";
+      tile.appendChild(img);
+      tile.addEventListener("click", function () { select(i); });
+      row.appendChild(tile);
+    });
+    var more = el("div", "demo-tile demo-more");
+    more.setAttribute("aria-hidden", "true");
+    more.appendChild(el("b", null, "All games"));
+    more.appendChild(el("span", null, "Library"));
+    row.appendChild(more);
+    select(0);
+  }
+
+  row.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowRight") { e.preventDefault(); select(selected + 1); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); select(selected - 1); }
+  });
+  // As in Flux: the wheel over the row moves sideways; below the row it scrolls the page.
+  row.addEventListener("wheel", function (e) {
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && row.scrollWidth > row.clientWidth) {
+      e.preventDefault();
+      row.scrollLeft += e.deltaY;
+    }
+  }, { passive: false });
+  row.addEventListener("scroll", bar);
+  window.addEventListener("resize", bar);
+
+  var url = /(^|\.)fluxlauncher\.com$/.test(location.hostname) ? "top-games.json" : "https://fluxlauncher.com/top-games.json";
+  if (FALLBACK) build(FALLBACK.games);
+  try {
+    fetch(url, { cache: "no-cache" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (data && data.games && data.games.length >= 5 && JSON.stringify(data.games) !== JSON.stringify(games)) build(data.games);
       })
       .catch(function () {});
   } catch (e) {}

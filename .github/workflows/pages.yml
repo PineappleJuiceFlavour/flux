@@ -1,0 +1,41 @@
+# Publishes fluxlauncher.com (the docs/ folder) to GitHub Pages. Runs on every change to the site
+# and once a day, so the Home-screen demo always shows Steam's five most played games. The daily
+# list is fetched at build time and never committed.
+name: Website
+
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**", "scripts/site_top_games.py", ".github/workflows/pages.yml"]
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fetch Steam's top 5
+        run: python scripts/site_top_games.py
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deployment
+        uses: actions/deploy-pages@v4

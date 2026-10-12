@@ -1,0 +1,92 @@
+{
+ "source": "Steam most played",
+ "games": [
+  {
+   "appid": 730,
+   "name": "Counter-Strike 2",
+   "description": "For over two decades, Counter-Strike has offered an elite competitive experience, one shaped by millions of players from across the globe. And now the next chapter in the CS story is about to begin. This is Counter-Strike 2.",
+   "genres": [
+    "Action",
+    "Free To Play"
+   ],
+   "developer": "Valve",
+   "publisher": "Valve",
+   "released": "Aug 21, 2012",
+   "free": true,
+   "peak": 1404227,
+   "cover": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/730/library_600x900.jpg",
+   "hero": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/730/library_hero.jpg",
+   "logo": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/730/logo.png"
+  },
+  {
+   "appid": 570,
+   "name": "Dota 2",
+   "description": "Every day, millions of players worldwide enter battle as one of over a hundred Dota heroes. And no matter if it's their 10th hour of play or 1,000th, there's always something new to discover. With regular updates that ensure a constant evolution of gameplay, features, and heroes, Dota 2 has taken on a life of its own.",
+   "genres": [
+    "Action",
+    "Strategy",
+    "Free To Play"
+   ],
+   "developer": "Valve",
+   "publisher": "Valve",
+   "released": "Jul 9, 2013",
+   "free": true,
+   "peak": 1034502,
+   "cover": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/570/library_600x900.jpg",
+   "hero": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/570/library_hero.jpg",
+   "logo": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/570/logo.png"
+  },
+  {
+   "appid": 578080,
+   "name": "PUBG: BATTLEGROUNDS",
+   "description": "PUBG: BATTLEGROUNDS, the high-stakes winner-take-all shooter that started the Battle Royale craze, is free-to-play! Drop into diverse maps, loot unique weapons and supplies, and survive in an ever-shrinking zone where every turn could be your last.",
+   "genres": [
+    "Action",
+    "Adventure",
+    "Massively Multiplayer"
+   ],
+   "developer": "PUBG Corporation",
+   "publisher": "KRAFTON, Inc.",
+   "released": "Dec 21, 2017",
+   "free": true,
+   "peak": 713683,
+   "cover": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/578080/library_600x900.jpg",
+   "hero": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/578080/library_hero.jpg",
+   "logo": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/578080/logo.png"
+  },
+  {
+   "appid": 1422450,
+   "name": "Deadlock",
+   "description": "Deadlock is a multiplayer game in early development.",
+   "genres": [
+    "Action"
+   ],
+   "developer": "Valve",
+   "publisher": "Valve",
+   "released": "To be announced",
+   "free": false,
+   "peak": 220575,
+   "cover": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/1422450/library_600x900.jpg",
+   "hero": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/1422450/library_hero.jpg",
+   "logo": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/1422450/logo.png"
+  },
+  {
+   "appid": 3393110,
+   "name": "AION 2",
+   "description": "AION 2 is the only MMORPG built around a world where the sky is the battlefield. Choose your faction, ascend as a Daeva, and fight a faction war across a world 36 times larger than the original. PC only, on Unreal Engine 5.",
+   "genres": [
+    "Action",
+    "Adventure",
+    "Massively Multiplayer"
+   ],
+   "developer": "NC",
+   "publisher": "NC",
+   "released": "Oct 5, 2026",
+   "free": true,
+   "peak": 392300,
+   "cover": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/3393110/10aa4b096ebe6af0d1dd7882e5ba004271aef6f7/header.jpg?t=1791504829",
+   "hero": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/3393110/10aa4b096ebe6af0d1dd7882e5ba004271aef6f7/header.jpg?t=1791504829",
+   "logo": null
+  }
+ ]
+}

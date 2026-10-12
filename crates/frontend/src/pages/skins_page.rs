@@ -866,16 +866,23 @@ impl Render for SkinsPage {
                     }))
             })));
 
-        h_flex().p_4()
-            .gap_4()
+        // The model column takes about a third of the window (within limits), so the page fits any
+        // screen; skins and capes start at the top and scroll on their own.
+        let model_width = (window.viewport_size().width * 0.3).clamp(px(240.), px(520.));
+        h_flex().size_full().items_start().p_4()
+            .gap_6()
             .child(v_flex()
+                .w(model_width)
+                .flex_shrink_0()
                 .gap_4()
                 .h_full()
+                .min_h_0()
                 .child(controls)
                 .children(preview_controls)
                 .child(variant_toggle)
-                .child(self.player_model_widget.clone()))
+                .child(div().flex_1().min_h_0().w_full().child(self.player_model_widget.clone())))
             .child(library
+                .h_full()
                 .overflow_y_scrollbar()
                 .drag_over(|style, _: &ExternalPaths, _, cx| {
                     style.bg(cx.theme().accent.opacity(0.5))

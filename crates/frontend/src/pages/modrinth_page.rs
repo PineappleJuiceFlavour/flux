@@ -1020,6 +1020,7 @@ impl Render for ModrinthSearchPage {
             .min_w(px(200.0))
             .p_3()
             .gap_3()
+            .child(crate::ui::mod_source_switch(cx))
             .child(type_button_group)
             .when_some(loader_button_group, |this, group| this.child(group))
             .when_some(filter_version_toggle, |this, button| this.child(button))

@@ -181,11 +181,17 @@ impl LauncherPage {
         });
         // The page's own header (where it is, and its buttons): not on Home / Library, whose
         // tabs are in the top bar.
+        // Pages opened from Home (a game's Options, the Tools pages) get a Back button to Home.
+        let back_home = breadcrumb.is_empty() && matches!(main_page, PageType::Game { .. } | PageType::Emulators | PageType::Controllers
+            | PageType::AddGame | PageType::ImportGames);
         let page_bar = (main_page != PageType::GamesHome && !minecraft_top).then(|| TitleBar {
-            left_content: vec![
-                div().overflow_hidden().pr_8().child(PagePath::new(ui.data.clone(), main_page.clone(), breadcrumb.clone())).into_any_element(),
-                controls.take().unwrap_or_else(|| div().into_any_element()),
-            ],
+            left_content: [
+                back_home.then(|| Button::new("page-back").small().ghost().icon(PandoraIcon::ArrowLeft).label("Back").mr_2()
+                    .on_click(|_, window, cx| crate::root::switch_page(PageType::GamesHome, &[], window, cx))
+                    .into_any_element()),
+                Some(div().overflow_hidden().pr_8().child(PagePath::new(ui.data.clone(), main_page.clone(), breadcrumb.clone())).into_any_element()),
+                Some(controls.take().unwrap_or_else(|| div().into_any_element())),
+            ].into_iter().flatten().collect(),
             right_content: Vec::new(),
             content_only: true,
         });
@@ -243,26 +249,41 @@ fn minecraft_tabs(page: &PageType, cx: &App) -> AnyElement {
     for (id, label, target, active) in sections {
         row = row.child(tab(id, label, target, active));
     }
-    if mods && !matches!(page, PageType::ModrinthProject { .. }) {
-        // Where to browse.
-        let on_curseforge = matches!(page, PageType::Curseforge { .. });
-        let source = |id: &'static str, label: &'static str, active: bool, target: PageType| div()
+    row.into_any_element()
+}
+
+/// Browse mods' Modrinth | CurseForge switch, at the top of the filter column. Switching keeps the
+/// instance you're adding mods to, and where you came from.
+pub fn mod_source_switch(cx: &App) -> AnyElement {
+    let config = InterfaceConfig::get(cx);
+    let theme = cx.theme();
+    let (on_curseforge, installing_for) = match &config.main_page {
+        PageType::Curseforge { installing_for } => (true, installing_for.clone()),
+        PageType::Modrinth { installing_for } => (false, installing_for.clone()),
+        _ => (false, None),
+    };
+    let breadcrumb = config.page_path.clone();
+    let source = |id: &'static str, label: &'static str, active: bool, target: PageType| {
+        let breadcrumb = breadcrumb.clone();
+        div()
             .id(id)
-            .px_2p5()
-            .py_0p5()
+            .flex_1()
+            .flex()
+            .justify_center()
+            .py_1()
             .rounded(theme.radius)
             .cursor_pointer()
-            .text_xs()
+            .text_sm()
             .font_weight(FontWeight::SEMIBOLD)
             .when(active, |this| this.bg(theme.primary).text_color(theme.primary_foreground))
-            .when(!active, |this| this.text_color(theme.muted_foreground))
+            .when(!active, |this| this.text_color(theme.muted_foreground).hover(|s| s.text_color(theme.foreground)))
             .child(label)
-            .on_click(move |_, window, cx| crate::root::switch_page(target.clone(), &[], window, cx));
-        row = row.child(h_flex().ml_2().p_0p5().gap_0p5().rounded(theme.radius).bg(theme.secondary)
-            .child(source("src-modrinth", "Modrinth", !on_curseforge, PageType::Modrinth { installing_for: None }))
-            .child(source("src-curseforge", "CurseForge", on_curseforge, PageType::Curseforge { installing_for: None })));
-    }
-    row.into_any_element()
+            .when(!active, |this| this.on_click(move |_, window, cx| crate::root::switch_page(target.clone(), &breadcrumb, window, cx)))
+    };
+    h_flex().w_full().p_0p5().gap_0p5().rounded(theme.radius_lg).bg(theme.secondary)
+        .child(source("src-modrinth", "Modrinth", !on_curseforge, PageType::Modrinth { installing_for: installing_for.clone() }))
+        .child(source("src-curseforge", "CurseForge", on_curseforge, PageType::Curseforge { installing_for }))
+        .into_any_element()
 }
 
 impl LauncherUI {
@@ -793,6 +814,7 @@ impl Render for LauncherUI {
                 .child(label)
                 .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
         };
+        let unread = crate::chat::Network::ALL.iter().any(|n| !crate::chat::state(*n).unread.is_empty() || crate::chat::state(*n).requests.iter().any(|r| r.incoming));
         let home_active = page_type == PageType::GamesHome && games_layout == GamesLayout::Shelf;
         let library_active = page_type == PageType::GamesHome && games_layout != GamesLayout::Shelf;
         let nav = h_flex()
@@ -814,9 +836,13 @@ impl Render for LauncherUI {
             .child(tab("nav-minecraft", "Minecraft", is_minecraft_page(&page_type)).on_click(cx.listener(|launcher, _, window, cx| {
                 launcher.switch_page(PageType::Home, &[], window, cx);
             })))
-            .child(tab("nav-friends", "Friends", false).on_click(cx.listener(|launcher, _, window, cx| {
-                launcher.open_chat(crate::chat::panel::ChatView::Friends, window, cx);
-            })));
+            // Friends opens the chat panel (on your chats when something new came in; the red dot).
+            .child(tab("nav-friends", "Friends", false).relative()
+                .when(unread, |this| this.child(div().absolute().top(px(4.)).right(px(3.)).size(px(7.)).rounded_full().bg(gpui::rgb(0xff5d5d))))
+                .on_click(cx.listener(move |launcher, _, window, cx| {
+                    let view = if unread { crate::chat::panel::ChatView::Chats } else { crate::chat::panel::ChatView::Friends };
+                    launcher.open_chat(view, window, cx);
+                })));
 
         let data = self.data.clone();
         let tools = Button::new("nav-tools")
@@ -847,23 +873,6 @@ impl Render for LauncherUI {
             .icon(PandoraIcon::Download)
             .label("Import games")
             .on_click(|_, window, cx| crate::root::switch_page(PageType::ImportGames, &[], window, cx));
-
-        let unread = crate::chat::Network::ALL.iter().any(|n| !crate::chat::state(*n).unread.is_empty() || crate::chat::state(*n).requests.iter().any(|r| r.incoming));
-        let chat = div()
-            .id("nav-chat")
-            .relative()
-            .size_8()
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(theme.radius)
-            .cursor_pointer()
-            .hover(|s| s.bg(theme.secondary_hover))
-            .child(Icon::new(PandoraIcon::MessageCircle).size_4())
-            .when(unread, |this| this.child(div().absolute().top(px(3.)).right(px(3.)).size(px(8.)).rounded_full().bg(gpui::rgb(0xff5d5d))))
-            .tooltip(|window, cx| Tooltip::new("Chat").build(window, cx))
-            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-            .on_click(cx.listener(|launcher, _, window, cx| launcher.open_chat(crate::chat::panel::ChatView::Chats, window, cx)));
 
         let accounts = self.data.accounts.read(cx);
         let (account_head, account_name) = if let Some(account) = &accounts.selected_account {
@@ -925,7 +934,7 @@ impl Render for LauncherUI {
                 div().flex_1().into_any_element(),
             ],
             right_content: update.into_iter()
-                .chain([import.into_any_element(), tools.into_any_element(), chat.into_any_element(), account.into_any_element()])
+                .chain([import.into_any_element(), tools.into_any_element(), account.into_any_element()])
                 .collect(),
             content_only: !crate::root::should_render_custom_titlebar(),
         };

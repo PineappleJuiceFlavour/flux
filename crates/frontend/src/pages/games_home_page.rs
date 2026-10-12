@@ -202,6 +202,12 @@ pub struct GamesHomePage {
     tiles: ScrollHandle,
     /// Dragging the faint bar under the Home row.
     bar_drag: bool,
+    /// Where the Home row is gliding to (how far scrolled), and where it is now.
+    row_target: Option<Pixels>,
+    row_pos: Pixels,
+    row_tick: Option<std::time::Instant>,
+    /// Bring this Home row tile into view once its new size has been drawn.
+    row_reveal_ix: Option<usize>,
     /// The game last opened from the Library (kept in the Home row).
     opened: Option<String>,
     /// An extra tile (All games / Add games) selected in the Home row instead of a game.
@@ -250,6 +256,10 @@ impl GamesHomePage {
             focus: cx.focus_handle(),
             tiles: ScrollHandle::new(),
             bar_drag: false,
+            row_target: None,
+            row_pos: px(0.),
+            row_tick: None,
+            row_reveal_ix: None,
             opened: None,
             extra: None,
             grid_scroll: ScrollHandle::new(),
@@ -290,7 +300,7 @@ impl GamesHomePage {
         InterfaceConfig::get_mut(cx).games_layout = GamesLayout::Shelf;
         self.select(id, cx);
         if let Some(at) = self.visible(cx).iter().position(|g| g.id == id) {
-            self.tiles.scroll_to_item(at);
+            self.row_reveal(at);
         }
         cx.refresh_windows();
     }
@@ -347,7 +357,11 @@ impl GamesHomePage {
             _ => self.selected.as_ref().and_then(|id| order.iter().position(|g| g == id)).unwrap_or(0),
         } as isize;
         let next = (at + delta).clamp(0, len as isize - 1) as usize;
-        self.tiles.scroll_to_item(next);
+        if shelf {
+            self.row_reveal(next);
+        } else {
+            self.tiles.scroll_to_item(next);
+        }
         if next < order.len() {
             let id = order[next].clone();
             self.select(&id, cx);
@@ -715,9 +729,13 @@ impl Render for GamesHomePage {
             self.reveal_frames -= 1;
             if self.reveal_frames == 0 {
                 self.reveal_selected(layout);
+                if layout == GamesLayout::Shelf && let Some(ix) = self.row_reveal_ix.take() {
+                    self.row_reveal(ix);
+                }
             }
             window.request_animation_frame();
         }
+        self.row_step(window);
         let list = self.visible(cx);
         let total = games::games(cx).len();
         if self.selected.as_ref().is_none_or(|id| !list.iter().any(|g| &g.id == id)) {
@@ -1054,8 +1072,8 @@ impl GamesHomePage {
         ).into_any_element()
     }
 
-    /// Centre the row on the point of the bar under the mouse.
-    fn bar_seek(&self, x: Pixels) {
+    /// Glide the row towards the point of the bar under the mouse.
+    fn bar_seek(&mut self, x: Pixels) {
         let view = self.tiles.bounds();
         let max = self.tiles.max_offset().x;
         let track = view.size.width - ROW_BAR_INSET * 2.;
@@ -1063,9 +1081,53 @@ impl GamesHomePage {
             return;
         }
         let at = ((x - view.left() - ROW_BAR_INSET) / track).clamp(0., 1.);
-        let target = ((view.size.width + max) * at - view.size.width / 2.).clamp(px(0.), max);
+        self.row_glide_to((view.size.width + max) * at - view.size.width / 2.);
+    }
+
+    /// Start gliding the Home row so it's scrolled `x` along (clamped to the row).
+    fn row_glide_to(&mut self, x: Pixels) {
+        let max = self.tiles.max_offset().x.max(px(0.));
+        self.row_target = Some(x.clamp(px(0.), max));
+    }
+
+    /// Glide just far enough that tile `ix` (drawn at its selected size) is fully on screen.
+    fn row_reveal(&mut self, ix: usize) {
+        self.row_reveal_ix = Some(ix);
+        let Some(item) = self.tiles.bounds_for_item(ix) else { return };
+        let view = self.tiles.bounds();
+        if view.size.width <= px(0.) {
+            return;
+        }
+        let margin = px(40.);
+        let left = item.left() - view.left();
+        let right = left + item.size.width.max(px(230.));
+        let now = self.row_target.unwrap_or(self.row_pos);
+        if left - margin < now {
+            self.row_glide_to(left - margin);
+        } else if right + margin > now + view.size.width {
+            self.row_glide_to(right + margin - view.size.width);
+        }
+    }
+
+    /// One frame of the Home row's glide (eases out, the same speed at any frame rate).
+    fn row_step(&mut self, window: &mut Window) {
         let offset = self.tiles.offset();
-        self.tiles.set_offset(point(-target, offset.y));
+        if let Some(target) = self.row_target {
+            let now = std::time::Instant::now();
+            let dt = self.row_tick.map(|t| now.duration_since(t).as_secs_f32()).unwrap_or(1. / 60.).min(0.1);
+            self.row_tick = Some(now);
+            let current = -offset.x;
+            let next = current + (target - current) * (1. - (-dt * 14.).exp());
+            if f32::from(target - next).abs() < 0.5 {
+                self.tiles.set_offset(point(-target, offset.y));
+                self.row_target = None;
+                self.row_tick = None;
+            } else {
+                self.tiles.set_offset(point(-next, offset.y));
+                window.request_animation_frame();
+            }
+        }
+        self.row_pos = -self.tiles.offset().x;
     }
 
     /// What to show when no game matches.
@@ -1084,9 +1146,19 @@ impl GamesHomePage {
         let custom = InterfaceConfig::get(cx).games_sort == GamesSort::Custom;
         let more = self.matching_count(cx).saturating_sub(list.len());
         let mut tiles = h_flex().id("shelf-tiles").px_6().py_3().gap_3().items_start().overflow_x_scroll().track_scroll(&self.tiles)
-            // The wheel over the row moves along the row (the row's own scroll runs first), and
-            // stops there, so the page only scrolls down to the description from below the row.
-            .on_scroll_wheel(|_, _, cx| cx.stop_propagation());
+            // The wheel over the row glides along the row, and stops there, so the page only
+            // scrolls down to the description from below the row. The row's own scroll has
+            // already jumped by now: put it back and glide to the same place instead.
+            .on_scroll_wheel(cx.listener(|page, event: &ScrollWheelEvent, window, cx| {
+                let delta = event.delta.pixel_delta(window.line_height());
+                let amount = if delta.x != px(0.) { delta.x } else { delta.y };
+                let y = page.tiles.offset().y;
+                page.tiles.set_offset(point(-page.row_pos, y));
+                let from = page.row_target.unwrap_or(page.row_pos);
+                page.row_glide_to(from - amount * 1.5);
+                cx.stop_propagation();
+                cx.notify();
+            }));
         let extra = self.extra;
         let ring = vec![
             BoxShadow { color: gpui::white().into(), offset: point(px(0.), px(0.)), blur_radius: px(0.), spread_radius: px(3.), inset: false },

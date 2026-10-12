@@ -387,8 +387,22 @@ pub fn open_create_instance(
     window: &mut Window,
     cx: &mut App,
 ) {
+    open_create_instance_with(metadata, instances, backend_handle, true, window, cx);
+}
+
+/// Open the new-instance dialog with the Max FPS preset switched on or off.
+pub fn open_create_instance_with(
+    metadata: Entity<FrontendMetadata>,
+    instances: Entity<InstanceEntries>,
+    backend_handle: BackendHandle,
+    max_fps: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let state = cx.new(|cx| {
-        CreateInstanceModalState::new(metadata, instances, backend_handle, window, cx)
+        let mut state = CreateInstanceModalState::new(metadata, instances, backend_handle, window, cx);
+        state.max_fps = max_fps;
+        state
     });
 
     window.open_dialog(cx, move |modal, window, cx| {

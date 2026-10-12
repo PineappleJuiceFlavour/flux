@@ -332,3 +332,6 @@ footer .spacer { flex: 1; }
 .give-links { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .give-links li { display: grid; gap: 1px; padding: 12px 14px; border-radius: 10px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line); }
 .give-links span { font-size: 13px; color: var(--muted); }
+
+/* Scrolling to a section stops below the sticky top bar. */
+section[id] { scroll-margin-top: 72px; }

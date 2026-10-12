@@ -6,23 +6,23 @@
 <title>Flux Launcher</title>
 <meta name="description" content="Flux is a free Windows launcher that puts your PC games, console emulators and Minecraft in one place.">
 <link rel="icon" href="assets/favicon.png">
-<link rel="stylesheet" href="style.css?v=d01c4dde">
+<link rel="stylesheet" href="style.css?v=8ab5cc50">
 </head>
 <body>
 <div class="glow" aria-hidden="true"></div>
 
 <header class="topbar">
   <div class="wrap">
-    <a class="brand" href="index.html"><img src="assets/logo.png" alt="">Flux</a>
+    <a class="brand" href="/"><img src="assets/logo.png" alt="">Flux</a>
     <nav class="tabs" aria-label="Site">
-      <a class="tab" href="index.html" aria-current="page">Home</a>
-      <a class="tab" href="#showcase">Features</a>
-      <a class="tab" href="support.html">Support</a>
-      <a class="tab" href="donate.html">Donate</a>
+      <a class="tab" href="/" aria-current="page">Home</a>
+      <a class="tab" href="/#features">Features</a>
+      <a class="tab" href="/support">Support</a>
+      <a class="tab" href="/donate">Donate</a>
       <a class="tab" href="https://github.com/PineappleJuiceFlavour/flux/tree/main" target="_blank" rel="noopener">Source</a>
     </nav>
     <span class="spacer"></span>
-    <a class="donate" href="donate.html" title="Support Flux" aria-label="Support Flux"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2v2"/><path d="M14 2v2"/><path d="M6 2v2"/><path d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"/></svg></a>
+    <a class="donate" href="/donate" title="Support Flux" aria-label="Support Flux"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2v2"/><path d="M14 2v2"/><path d="M6 2v2"/><path d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"/></svg></a>
     <a class="play small" href="https://github.com/PineappleJuiceFlavour/flux/releases/latest/download/Flux.exe">Download</a>
   </div>
 </header>
@@ -43,8 +43,8 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>
           Source code
         </a>
-        <a class="ghost" href="support.html">Support</a>
-        <a class="ghost donate-label" href="donate.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2v2"/><path d="M14 2v2"/><path d="M6 2v2"/><path d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"/></svg>Donate</a>
+        <a class="ghost" href="/support">Support</a>
+        <a class="ghost donate-label" href="/donate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2v2"/><path d="M14 2v2"/><path d="M6 2v2"/><path d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"/></svg>Donate</a>
       </div>
       <p class="note">The button always downloads the newest <code>Flux.exe</code> straight from GitHub. No installer: run it and Flux sets itself up.</p>
       <div class="facts" aria-label="About the download">
@@ -260,10 +260,10 @@
 <footer>
   <div class="wrap">
     <span>Flux Launcher</span>
-    <a href="support.html">Support</a>
+    <a href="/support">Support</a>
     <a href="https://github.com/PineappleJuiceFlavour/flux/tree/main" target="_blank" rel="noopener">Source</a>
     <a href="https://github.com/PineappleJuiceFlavour/flux/releases" target="_blank" rel="noopener">Releases</a>
-    <a href="donate.html">Donate</a>
+    <a href="/donate">Donate</a>
     <span class="spacer"></span>
     <span>Free and open source under the MIT license. Not affiliated with Mojang, Microsoft, Sony or Valve.</span>
   </div>
@@ -418,7 +418,12 @@
     selected = (i + games.length) % games.length;
     show();
     var tile = row.children[selected];
-    if (tile && tile.scrollIntoView) tile.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+    // Slide only the row (scrollIntoView would also scroll the page to the demo).
+    if (tile) {
+      var left = tile.offsetLeft - row.offsetLeft, right = left + tile.offsetWidth;
+      if (left < row.scrollLeft) row.scrollTo({ left: left - 20, behavior: "smooth" });
+      else if (right > row.scrollLeft + row.clientWidth) row.scrollTo({ left: right - row.clientWidth + 20, behavior: "smooth" });
+    }
     bar();
   }
 
@@ -485,6 +490,52 @@
       })
       .catch(function () {});
   } catch (e) {}
+})();
+</script>
+<script>
+// Top bar: Home and Features scroll this page without putting "#..." in the address, and the tab
+// for the part you're looking at is lit (Features while the features section fills the middle).
+(function () {
+  var home = document.querySelector('.tabs a[href="/"]');
+  var features = document.querySelector('.tabs a[href="/#features"]');
+  var section = document.getElementById("showcase");
+  if (!home || !features || !section) return;
+  // Where the features section starts, below the sticky top bar. Scrolling to an exact spot (not
+  // scrollIntoView) gives the same result however many times it runs.
+  function featuresTop() { return section.getBoundingClientRect().top + window.scrollY - 72; }
+  function light(onFeatures) {
+    if (onFeatures) { features.setAttribute("aria-current", "page"); home.removeAttribute("aria-current"); }
+    else { home.setAttribute("aria-current", "page"); features.removeAttribute("aria-current"); }
+  }
+  function update() {
+    var r = section.getBoundingClientRect(), line = (window.innerHeight || document.documentElement.clientHeight || 800) * 0.35;
+    light(r.top <= line && r.bottom > line);
+  }
+  features.addEventListener("click", function (e) {
+    e.preventDefault();
+    window.scrollTo({ top: featuresTop(), behavior: "smooth" });
+    light(true);
+  });
+  home.addEventListener("click", function (e) {
+    e.preventDefault();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    light(false);
+  });
+  // Coming from another page's Features link (/#features): jump there, then tidy the address.
+  function fromHash() {
+    if (location.hash !== "#features" && location.hash !== "#showcase") return;
+    if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+    history.replaceState(null, "", "/");
+    var go = function () { window.scrollTo({ top: featuresTop(), behavior: "instant" }); update(); };
+    requestAnimationFrame(go);
+    // The Home demo above can grow as its pictures load: land on Features again once it has.
+    if (document.readyState !== "complete") window.addEventListener("load", go, { once: true });
+    setTimeout(go, 600);
+  }
+  fromHash();
+  window.addEventListener("hashchange", fromHash);
+  window.addEventListener("scroll", update, { passive: true });
+  update();
 })();
 </script>
 </body>

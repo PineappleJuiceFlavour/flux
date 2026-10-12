@@ -11,7 +11,8 @@ use super::{Friend, Message, Network, Request, fail, http, notice, store, update
 const NET: Network = Network::Xbox;
 const PEOPLE: &str = "https://peoplehub.xboxlive.com/users/me/people";
 const SOCIAL: &str = "https://social.xboxlive.com/users/me/people";
-const MESSAGES: &str = "https://xblmessaging.xboxlive.com/network/Xbox/users/me";
+// Lower-case "xbox": the messaging service rejects some requests that spell it "Xbox".
+const MESSAGES: &str = "https://xblmessaging.xboxlive.com/network/xbox/users/me";
 
 struct Pass {
     authorization: String,
@@ -52,13 +53,20 @@ async fn request(method: reqwest::Method, url: &str, contract: &str, body: Optio
     let response = request.send().await.map_err(|e| format!("Couldn't reach Xbox Live: {e}"))?;
     let status = response.status();
     let text = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        log::warn!("Xbox Live {status} for {}: {}", url.split('?').next().unwrap_or(url), text.chars().take(300).collect::<String>());
+    }
     if status.is_success() {
         Ok(serde_json::from_str(&text).unwrap_or(Value::Null))
     } else if status.as_u16() == 401 || status.as_u16() == 403 {
         *PASS.lock().await = None;
         Err(format!("Xbox Live didn't allow that ({status}). If this keeps happening, it needs Flux's own Microsoft app (waiting on approval)."))
     } else {
-        Err(format!("Xbox Live said {status}"))
+        // Xbox Live's own explanation, e.g. {"errorMessage": "..."}.
+        let reason = serde_json::from_str::<Value>(&text).ok()
+            .and_then(|j| j["errorMessage"].as_str().or(j["message"].as_str()).map(String::from))
+            .unwrap_or_default();
+        Err(if reason.is_empty() { format!("Xbox Live said {status}") } else { format!("Xbox Live said {status}: {reason}") })
     }
 }
 
@@ -172,8 +180,26 @@ fn parse_messages(json: &Value, me: &str) -> Vec<Message> {
 pub async fn load_messages(friend: String) {
     let result: Result<(), String> = async {
         let (_, me) = pass().await?;
-        let json = request(reqwest::Method::GET, &format!("{MESSAGES}/conversations/users/xuid({friend})?maxItems=60"), "1", None).await?;
-        super::set_messages(NET, &friend, parse_messages(&json, &me), false);
+        // Find your one-to-one conversation with them in the inbox (or message requests), then
+        // load it by its id.
+        let mut conversation = None;
+        for folder in ["primary", "secondary"] {
+            let inbox = request(reqwest::Method::GET, &format!("{MESSAGES}/inbox/{folder}"), "2", None).await?;
+            conversation = inbox["conversations"].as_array().into_iter().flatten().find(|c| {
+                c["type"] == "OneToOne" && c["participants"].as_array().is_some_and(|p| p.iter().any(|x| x.as_str() == Some(friend.as_str())))
+            }).and_then(|c| c["conversationId"].as_str().map(String::from));
+            if conversation.is_some() {
+                break;
+            }
+        }
+        let messages = match conversation {
+            Some(id) => {
+                let json = request(reqwest::Method::GET, &format!("{MESSAGES}/conversations/OneToOne/{id}?maxItems=100"), "2", None).await?;
+                parse_messages(&json, &me)
+            },
+            None => Vec::new(),
+        };
+        super::set_messages(NET, &friend, messages, false);
         Ok(())
     }.await;
     if let Err(e) = result {
@@ -184,7 +210,10 @@ pub async fn load_messages(friend: String) {
 pub async fn send(friend: String, text: String) {
     let body = json!({"parts": [{"contentType": "text", "version": 0, "text": text}]});
     match request(reqwest::Method::POST, &format!("{MESSAGES}/conversations/users/xuid({friend})"), "1", Some(body)).await {
-        Ok(_) => load_messages(friend).await,
+        Ok(_) => {
+            log::info!("Xbox message sent");
+            load_messages(friend).await
+        },
         Err(e) => fail(NET, e),
     }
 }

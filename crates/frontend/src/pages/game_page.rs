@@ -237,7 +237,7 @@ impl GamePage {
 
     fn render_play(&mut self, game: &LibraryGame, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let viewport = window.viewport_size();
-        let sidebar = InterfaceConfig::get(cx).sidebar_width.max(48.);
+        let sidebar = 0.0f32; // no sidebar: the top bar holds navigation
         let size = size(viewport.width - px(sidebar), viewport.height - px(44.));
 
         let running = self.is_running();

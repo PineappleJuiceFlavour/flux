@@ -8,6 +8,10 @@ use rustc_hash::FxHashMap;
 use schema::pandora_update::UpdatePrompt;
 use serde::{Deserialize, Serialize};
 
+use gpui_component::{Sizable, button::{Button, ButtonVariants}, menu::{DropdownMenu, PopupMenuItem}};
+
+use crate::component::generic_title_bar::TitleBar;
+use crate::interface_config::GamesLayout;
 use crate::{
     component::{generic_title_bar::TitleBarState, main_title_bar::MainTitleBar, menu::{MenuGroup, MenuGroupItem}, page_path::PagePath, resize_panel::{ResizePanel, ResizePanelState}, shrinking_text::ShrinkingText}, entity::{
         DataEntities, account::AccountExt, instance::{InstanceAddedEvent, InstanceEntries, InstanceEntry, InstanceModifiedEvent, InstanceMovedToTopEvent, InstanceRemovedEvent}
@@ -26,6 +30,7 @@ pub struct LauncherUI {
     pending_page: Option<(PageType, Arc<[PageType]>)>,
     _controller: Task<()>,
     chat: Option<Entity<crate::chat::panel::ChatPanel>>,
+    search: Entity<crate::component::global_search::GlobalSearch>,
     _instance_added_subscription: Subscription,
     _instance_modified_subscription: Subscription,
     _instance_removed_subscription: Subscription,
@@ -135,7 +140,7 @@ pub enum LauncherPage {
 }
 
 impl LauncherPage {
-    fn render(self, ui: &LauncherUI, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, ui: &LauncherUI, top_nav: AnyElement, window: &mut Window, cx: &mut App) -> impl IntoElement {
         fn process(entity: Entity<impl Page>, window: &mut Window, cx: &mut App) -> (bool, AnyElement, AnyElement) {
             entity.update(cx, |page, cx| {
                 (page.scrollable(cx), page.controls(window, cx).into_any_element(), page.render(window, cx).into_any_element())
@@ -162,30 +167,102 @@ impl LauncherPage {
         };
 
         let config = InterfaceConfig::get(cx);
-        let page_path = PagePath::new(ui.data.clone(), config.main_page.clone(), config.page_path.clone());
-        let title_bar = MainTitleBar {
-            page_path,
-            controls,
-            update: ui.update.clone(),
-            send: ui.data.backend_handle.clone(),
-        };
+        let main_page = config.main_page.clone();
+        let breadcrumb = config.page_path.clone();
+        let minecraft = is_minecraft_page(&main_page);
+        // A Minecraft section opened from its tab: its buttons go beside the sub-tabs.
+        let minecraft_top = minecraft && breadcrumb.is_empty();
+        let mut controls = Some(controls);
 
-        if scrollable {
-            v_flex()
-                .size_full()
-                .child(title_bar)
-                .child(div().flex_1().overflow_hidden().child(
-                    v_flex().size_full().overflow_y_scrollbar().child(page),
-                ))
+        let sub_tabs = minecraft.then(|| TitleBar {
+            left_content: vec![minecraft_tabs(&main_page, cx)],
+            right_content: if minecraft_top { controls.take().into_iter().collect() } else { Vec::new() },
+            content_only: true,
+        });
+        // The page's own header (where it is, and its buttons): not on Home / Library, whose
+        // tabs are in the top bar.
+        let page_bar = (main_page != PageType::GamesHome && !minecraft_top).then(|| TitleBar {
+            left_content: vec![
+                div().overflow_hidden().pr_8().child(PagePath::new(ui.data.clone(), main_page.clone(), breadcrumb.clone())).into_any_element(),
+                controls.take().unwrap_or_else(|| div().into_any_element()),
+            ],
+            right_content: Vec::new(),
+            content_only: true,
+        });
+
+        let body = if scrollable {
+            div().flex_1().overflow_hidden().child(v_flex().size_full().overflow_y_scrollbar().child(page))
         } else {
-            // The page gets exactly the space under the title bar (not the full window height), so
+            // The page gets exactly the space under the bars (not the full window height), so
             // pages that scroll themselves can reach their bottom in any window size.
-            v_flex()
-                .size_full()
-                .child(title_bar)
-                .child(div().flex_1().min_h_0().w_full().overflow_hidden().child(page))
-        }
+            div().flex_1().min_h_0().w_full().overflow_hidden().child(page)
+        };
+        v_flex()
+            .size_full()
+            .child(top_nav)
+            .children(sub_tabs)
+            .children(page_bar)
+            .child(body)
     }
+}
+
+/// Pages that belong to the Minecraft tab.
+fn is_minecraft_page(page: &PageType) -> bool {
+    matches!(page, PageType::Home | PageType::Quickplay | PageType::Instances | PageType::Skins | PageType::Modrinth { .. }
+        | PageType::Curseforge { .. } | PageType::Import | PageType::Syncing | PageType::ModrinthProject { .. } | PageType::InstancePage { .. })
+}
+
+/// The Minecraft tab's sections.
+fn minecraft_tabs(page: &PageType, cx: &App) -> AnyElement {
+    let config = InterfaceConfig::get(cx);
+    let theme = cx.theme();
+    let mods = matches!(page, PageType::Modrinth { .. } | PageType::Curseforge { .. } | PageType::ModrinthProject { .. });
+    let sections: Vec<(&'static str, &'static str, PageType, bool)> = [
+        (true, "mc-play", "Play", PageType::Home, *page == PageType::Home),
+        (true, "mc-instances", "Instances", PageType::Instances, matches!(page, PageType::Instances | PageType::InstancePage { .. })),
+        (true, "mc-mods", "Browse mods", PageType::Modrinth { installing_for: None }, mods),
+        (!config.hide_skins, "mc-skins", "Skins", PageType::Skins, *page == PageType::Skins),
+        (config.show_quickplay_page, "mc-quickplay", "Quick Play", PageType::Quickplay, *page == PageType::Quickplay),
+        (true, "mc-import", "Import", PageType::Import, *page == PageType::Import),
+        (true, "mc-sync", "Sync", PageType::Syncing, *page == PageType::Syncing),
+    ].into_iter().filter(|s| s.0).map(|(_, id, label, target, active)| (id, label, target, active)).collect();
+
+    let tab = |id: &'static str, label: &'static str, target: PageType, active: bool| {
+        v_flex()
+            .id(id)
+            .cursor_pointer()
+            .gap_1()
+            .pt_1()
+            .child(div().px_1().text_sm().font_weight(FontWeight::SEMIBOLD)
+                .text_color(if active { theme.foreground } else { theme.muted_foreground })
+                .child(label))
+            .child(div().h(px(2.)).rounded_full().when(active, |this| this.bg(theme.primary)))
+            .on_click(move |_, window, cx| crate::root::switch_page(target.clone(), &[], window, cx))
+    };
+    let mut row = h_flex().gap_5().items_center();
+    for (id, label, target, active) in sections {
+        row = row.child(tab(id, label, target, active));
+    }
+    if mods && !matches!(page, PageType::ModrinthProject { .. }) {
+        // Where to browse.
+        let on_curseforge = matches!(page, PageType::Curseforge { .. });
+        let source = |id: &'static str, label: &'static str, active: bool, target: PageType| div()
+            .id(id)
+            .px_2p5()
+            .py_0p5()
+            .rounded(theme.radius)
+            .cursor_pointer()
+            .text_xs()
+            .font_weight(FontWeight::SEMIBOLD)
+            .when(active, |this| this.bg(theme.primary).text_color(theme.primary_foreground))
+            .when(!active, |this| this.text_color(theme.muted_foreground))
+            .child(label)
+            .on_click(move |_, window, cx| crate::root::switch_page(target.clone(), &[], window, cx));
+        row = row.child(h_flex().ml_2().p_0p5().gap_0p5().rounded(theme.radius).bg(theme.secondary)
+            .child(source("src-modrinth", "Modrinth", !on_curseforge, PageType::Modrinth { installing_for: None }))
+            .child(source("src-curseforge", "CurseForge", on_curseforge, PageType::Curseforge { installing_for: None })));
+    }
+    row.into_any_element()
 }
 
 impl LauncherUI {
@@ -355,6 +432,7 @@ impl LauncherUI {
             update: None,
             _controller,
             chat: None,
+            search: cx.new(|cx| crate::component::global_search::GlobalSearch::new(data, window, cx)),
             sidebar_state,
             recent_instances,
             page_history_backwards: VecDeque::with_capacity(32),
@@ -502,20 +580,14 @@ impl LauncherUI {
     }
 
     /// The pages in the sidebar, top to bottom (LT / RT step through them).
+    /// The main places, in order (LT / RT step through them).
     fn sidebar_pages(cx: &App) -> Vec<PageType> {
         let config = InterfaceConfig::get(cx);
-        if config.library_mode == LibraryMode::Games {
-            return vec![PageType::GamesHome, PageType::AddGame, PageType::ImportGames, PageType::Emulators, PageType::Controllers];
-        }
-        let mut pages = vec![PageType::Home];
-        if config.show_quickplay_page {
-            pages.push(PageType::Quickplay);
-        }
-        pages.push(PageType::Instances);
+        let mut pages = vec![PageType::GamesHome, PageType::Home, PageType::Instances, PageType::Modrinth { installing_for: None }];
         if !config.hide_skins {
             pages.push(PageType::Skins);
         }
-        pages.extend([PageType::Modrinth { installing_for: None }, PageType::Curseforge { installing_for: None }, PageType::Import, PageType::Syncing]);
+        pages.extend([PageType::Emulators, PageType::Controllers]);
         pages
     }
 
@@ -691,219 +763,103 @@ impl Render for LauncherUI {
             }
         }
 
-        let (page_type, show_skins, iconized_sidebar, show_sidebar_icons, show_quickplay_page) = {
+        let (page_type, games_layout) = {
             let config = InterfaceConfig::get(cx);
-            (config.main_page.clone(), !config.hide_skins, config.sidebar_width == ICONIZED_SIDEBAR_WIDTH, config.show_sidebar_icons, config.show_quickplay_page)
+            (config.main_page.clone(), config.games_layout)
         };
+        let theme = cx.theme().clone();
 
-        let games_mode = InterfaceConfig::get(cx).library_mode == LibraryMode::Games;
-        // Sidebar entries borrow 'static names, so the player's game names are leaked once each (a
-        // handful of short strings for the app's lifetime).
-        // The games themselves are on the Games home screen (row, grid or list).
-        let games_entries: Vec<(bool, &'static str, PandoraIcon, PageType)> = vec![
-            (true, "Home", PandoraIcon::Gamepad2, PageType::GamesHome),
-            (true, "Add game", PandoraIcon::Plus, PageType::AddGame),
-            (true, "Import games", PandoraIcon::Download, PageType::ImportGames),
-        ];
-        let games_groups: Vec<(&'static str, Vec<(bool, &'static str, PandoraIcon, PageType)>)> = vec![
-            ("Library", games_entries),
-            ("Tools", vec![
-                (true, "Emulators", PandoraIcon::Settings, PageType::Emulators),
-                (true, "Controllers", PandoraIcon::Gamepad2, PageType::Controllers),
-            ]),
-        ];
-        let minecraft_groups: Vec<(&'static str, Vec<(bool, &'static str, PandoraIcon, PageType)>)> = vec![
-            ("Minecraft", vec![
-                (true, "Home", PandoraIcon::Zap, PageType::Home),
-                (show_quickplay_page, t::quickplay::title(), PandoraIcon::Rocket, PageType::Quickplay),
-                (true, t::instance::title(), PandoraIcon::Box, PageType::Instances),
-                (show_skins, t::skins::title(), PandoraIcon::FaceSlightlySmiling, PageType::Skins),
-            ]),
-            (t::instance::content::title(), vec![
-                (true, t::modrinth::name(), PandoraIcon::CircleCheck, PageType::Modrinth { installing_for: None }),
-                (true, t::curseforge::name(), PandoraIcon::Anvil, PageType::Curseforge { installing_for: None }),
-            ]),
-            (t::instance::sync::files(), vec![
-                (true, t::import::label(), PandoraIcon::Download, PageType::Import),
-                (true, t::instance::sync::label(), PandoraIcon::RefreshCcw, PageType::Syncing),
-            ]),
-        ];
-        let page_groups = if games_mode { &games_groups } else { &minecraft_groups };
-
-        let sidebar_pages = if !iconized_sidebar {
-            let mut groups: heapless::Vec<MenuGroup, 4> = heapless::Vec::new();
-
-            for (group_name, group_entries) in page_groups {
-                let mut group = MenuGroup::new(*group_name);
-                for (show, title, icon, page) in group_entries {
-                    if !*show {
-                        continue;
-                    }
-                    let page = page.clone();
-                    group = group.child(MenuGroupItem::new(*title)
-                        .when(show_sidebar_icons, |this| this.icon(icon.clone()))
-                        .active(page_type == page)
-                        .on_click(cx.listener(move |launcher, _, window, cx| {
-                            if page == PageType::GamesHome {
-                                crate::pages::games_home_page::reset_layout(cx);
-                                cx.refresh_windows();
-                            }
-                            launcher.switch_page(page.clone(), &[], window, cx);
-                        })));
-                }
-                let _ = groups.push(group);
-            }
-
-            if !games_mode && !self.recent_instances.is_empty() {
-                let mut recent_instances_group = MenuGroup::new(t::instance::recent());
-
-                for instance in &self.recent_instances {
-                    let name = instance.name.clone();
-                    let active = page_type == PageType::InstancePage { name: name.clone() };
-                    let item = MenuGroupItem::new(name.clone())
-                        .when(show_sidebar_icons, |this| {
-                            let size = (window.rem_size().as_f32() * 0.875).round() as u32;
-                            let size_px = px(size as f32);
-                            let icon = if let Some(icon) = instance.icon.clone() {
-                                let transform = png_render_cache::ImageTransformation::Resize { width: size, height: size };
-                                png_render_cache::render_with_transform(icon, transform, cx)
-                                    .rounded(cx.theme().radius).size(size_px).min_w(size_px).min_h(size_px).into_any_element()
-                            } else {
-                                let icon_path = instance.configuration.instance_fallback_icon
-                                    .map(|s| s.as_str())
-                                    .unwrap_or("icons/box.svg");
-                                Icon::default().path(icon_path).size(size_px).min_w(size_px).min_h(size_px).into_any_element()
-                            };
-                            this.icon(icon)
-                        })
-                        .active(active)
-                        .on_click(cx.listener(move |launcher, _, window, cx| {
-                            launcher.switch_page(PageType::InstancePage { name: name.clone() }, &[PageType::Instances], window, cx);
-                        }));
-                    recent_instances_group = recent_instances_group.child(item);
-                }
-
-                let _ = groups.push(recent_instances_group);
-            }
-
-            v_flex()
-                .flex_1()
-                .min_h_0()
+        // Main tabs. The top bar is a window-drag area, so each tab claims its mouse press.
+        let tab = |id: &'static str, label: &'static str, active: bool| {
+            div()
+                .id(id)
                 .px_3()
-                .gap_y_3()
-                .children(groups)
-                .overflow_y_scrollbar()
-                .into_any_element()
-        } else {
-            let mut groups = Vec::new();
-
-            for (_group_name, group_entries) in page_groups.iter() {
-                let mut group = v_flex()
-                    .items_center().min_w_full().max_w_full().w_full()
-                    .min_h_0()
-                    .gap_y_0p5();
-                for (show, title, icon, page) in group_entries {
-                    if !*show {
-                        continue;
-                    }
-                    let title = *title;
-                    let page = page.clone();
-                    group = group.child(div()
-                        .id(title)
-                        .p_2()
-                        .rounded(cx.theme().radius)
-                        .when_else(page_type == page, |this| {
-                            this.bg(cx.theme().sidebar_accent)
-                                .text_color(cx.theme().sidebar_accent_foreground)
-                        }, |this| {
-                            this.hover(|this| {
-                                this.bg(cx.theme().sidebar_accent)
-                                    .text_color(cx.theme().sidebar_accent_foreground)
-                            })
-                        })
-                        .child(icon.clone())
-                        .tooltip(move |window, cx| {
-                            Tooltip::new(title).build(window, cx)
-                        })
-                        .on_click(cx.listener(move |launcher, _, window, cx| {
-                            if page == PageType::GamesHome {
-                                crate::pages::games_home_page::reset_layout(cx);
-                                cx.refresh_windows();
-                            }
-                            launcher.switch_page(page.clone(), &[], window, cx);
-                        })));
-                }
-                groups.push(group.into_any_element());
-            }
-
-            if !games_mode && !self.recent_instances.is_empty() {
-                let mut group = v_flex()
-                    .items_center().min_w_full().max_w_full().w_full()
-                    .min_h_0()
-                    .gap_y_0p5();
-
-                for instance in &self.recent_instances {
-                    let name = instance.name.clone();
-                    let active = page_type == PageType::InstancePage { name: name.clone() };
-
-                    let size = window.rem_size().as_f32().round() as u32;
-                    let size_px = px(size as f32);
-                    let icon = if let Some(icon) = instance.icon.clone() {
-                        let transform = png_render_cache::ImageTransformation::Resize { width: size, height: size };
-                        png_render_cache::render_with_transform(icon, transform, cx)
-                            .rounded(cx.theme().radius).size(size_px).min_w(size_px).min_h(size_px).into_any_element()
-                    } else {
-                        let icon_path = instance.configuration.instance_fallback_icon
-                            .map(|s| s.as_str())
-                            .unwrap_or("icons/box.svg");
-                        Icon::default().path(icon_path).size(size_px).min_w(size_px).min_h(size_px).into_any_element()
-                    };
-
-                    group = group.child(div()
-                        .id(name.clone())
-                        .p_2()
-                        .rounded(cx.theme().radius)
-                        .when_else(active, |this| {
-                            this.bg(cx.theme().sidebar_accent)
-                                .text_color(cx.theme().sidebar_accent_foreground)
-                        }, |this| {
-                            this.hover(|this| {
-                                this.bg(cx.theme().sidebar_accent)
-                                    .text_color(cx.theme().sidebar_accent_foreground)
-                            })
-                        })
-                        .child(icon)
-                        .tooltip({
-                            let name = name.clone();
-                            move |window, cx| {
-                                Tooltip::new(name.clone()).build(window, cx)
-                            }
-                        })
-                        .on_click(cx.listener(move |launcher, _, window, cx| {
-                            launcher.switch_page(PageType::InstancePage { name: name.clone() }, &[PageType::Instances], window, cx);
-                        })));
-                }
-                groups.push(group.into_any_element());
-            }
-
-            v_flex()
-                .items_center().min_w_full().max_w_full().w_full()
-                .min_h_0()
-                .pt_1()
-                .px_2()
-                .gap_y_3()
-                .children(groups)
-                .overflow_y_scrollbar()
-                .into_any_element()
+                .py_1p5()
+                .rounded(theme.radius)
+                .cursor_pointer()
+                .text_sm()
+                .font_weight(FontWeight::SEMIBOLD)
+                .when(active, |this| this.bg(theme.primary.opacity(0.22)).text_color(theme.foreground))
+                .when(!active, |this| this.text_color(theme.muted_foreground).hover(|s| s.text_color(theme.foreground)))
+                .child(label)
+                .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
         };
+        let home_active = page_type == PageType::GamesHome && games_layout == GamesLayout::Shelf;
+        let library_active = page_type == PageType::GamesHome && games_layout != GamesLayout::Shelf;
+        let nav = h_flex()
+            .gap_1()
+            .items_center()
+            .child(gpui::img(ImageSource::Resource(Resource::Embedded("images/branding/logo.png".into())))
+                .size_6().min_w_6().min_h_6().mr_3().object_fit(ObjectFit::Contain))
+            .child(tab("nav-home", "Home", home_active).on_click(cx.listener(|launcher, _, window, cx| {
+                InterfaceConfig::get_mut(cx).games_layout = GamesLayout::Shelf;
+                launcher.switch_page(PageType::GamesHome, &[], window, cx);
+                cx.refresh_windows();
+            })))
+            .child(tab("nav-library", "Library", library_active).on_click(cx.listener(|launcher, _, window, cx| {
+                let config = InterfaceConfig::get_mut(cx);
+                config.games_layout = if config.games_library_view == GamesLayout::List { GamesLayout::List } else { GamesLayout::Grid };
+                launcher.switch_page(PageType::GamesHome, &[], window, cx);
+                cx.refresh_windows();
+            })))
+            .child(tab("nav-minecraft", "Minecraft", is_minecraft_page(&page_type)).on_click(cx.listener(|launcher, _, window, cx| {
+                launcher.switch_page(PageType::Home, &[], window, cx);
+            })))
+            .child(tab("nav-friends", "Friends", false).on_click(cx.listener(|launcher, _, window, cx| {
+                launcher.open_chat(crate::chat::panel::ChatView::Friends, window, cx);
+            })));
 
+        let data = self.data.clone();
+        let tools = Button::new("nav-tools")
+            .small()
+            .ghost()
+            .label("Tools")
+            .icon(PandoraIcon::ChevronDown)
+            .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                let data = data.clone();
+                menu.item(PopupMenuItem::new("Emulators").icon(PandoraIcon::Computer)
+                        .on_click(|_, window, cx| crate::root::switch_page(PageType::Emulators, &[], window, cx)))
+                    .item(PopupMenuItem::new("Controllers").icon(PandoraIcon::Gamepad2)
+                        .on_click(|_, window, cx| crate::root::switch_page(PageType::Controllers, &[], window, cx)))
+                    .item(PopupMenuItem::new("Art").icon(PandoraIcon::Image)
+                        .on_click(|_, window, cx| {
+                            crate::pages::games_home_page::open_art_panel(cx);
+                            crate::root::switch_page(PageType::GamesHome, &[], window, cx);
+                        }))
+                    .item(PopupMenuItem::new("Add a game").icon(PandoraIcon::Plus)
+                        .on_click(|_, window, cx| crate::root::switch_page(PageType::AddGame, &[], window, cx)))
+                    .item(PopupMenuItem::separator())
+                    .item(PopupMenuItem::new("Settings").icon(PandoraIcon::Settings)
+                        .on_click(move |_, window, cx| crate::settings::open_settings_window(window, &data, cx)))
+            });
+        let import = Button::new("nav-import")
+            .small()
+            .ghost()
+            .icon(PandoraIcon::Download)
+            .label("Import games")
+            .on_click(|_, window, cx| crate::root::switch_page(PageType::ImportGames, &[], window, cx));
+
+        let unread = crate::chat::Network::ALL.iter().any(|n| !crate::chat::state(*n).unread.is_empty() || crate::chat::state(*n).requests.iter().any(|r| r.incoming));
+        let chat = div()
+            .id("nav-chat")
+            .relative()
+            .size_8()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(theme.radius)
+            .cursor_pointer()
+            .hover(|s| s.bg(theme.secondary_hover))
+            .child(Icon::new(PandoraIcon::MessageCircle).size_4())
+            .when(unread, |this| this.child(div().absolute().top(px(3.)).right(px(3.)).size(px(8.)).rounded_full().bg(gpui::rgb(0xff5d5d))))
+            .tooltip(|window, cx| Tooltip::new("Chat").build(window, cx))
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+            .on_click(cx.listener(|launcher, _, window, cx| launcher.open_chat(crate::chat::panel::ChatView::Chats, window, cx)));
 
         let accounts = self.data.accounts.read(cx);
         let (account_head, account_name) = if let Some(account) = &accounts.selected_account {
-            let account_name = account.username((InterfaceConfig::get(cx).hide_usernames || crate::privacy::masking()));
-            let hide_skins = InterfaceConfig::get(cx).hide_skins;
-
-            let head = if hide_skins {
+            let account_name = account.username(InterfaceConfig::get(cx).hide_usernames || crate::privacy::masking());
+            let head = if InterfaceConfig::get(cx).hide_skins {
                 gpui::img(ImageSource::Resource(Resource::Embedded("images/hidden_head.png".into())))
             } else if let Some(head) = &account.head {
                 let resize = png_render_cache::ImageTransformation::Resize { width: 32, height: 32 };
@@ -913,29 +869,21 @@ impl Render for LauncherUI {
             };
             (head, account_name)
         } else {
-            (
-                gpui::img(ImageSource::Resource(Resource::Embedded("images/default_head.png".into()))),
-                t::account::none().into(),
-            )
+            (gpui::img(ImageSource::Resource(Resource::Embedded("images/default_head.png".into()))), t::account::none().into())
         };
-
-        let account_button = h_flex()
-            .id("account-button")
-            .flex_1()
-            .p_2()
-            .max_w_full()
+        let account = h_flex()
+            .id("nav-account")
             .gap_2()
-            .when(!iconized_sidebar, |this| this.justify_start())
-            .when(iconized_sidebar, |this| this.justify_center())
-            .text_size(rems(0.9375))
-            .line_height(rems(1.0))
-            .rounded(cx.theme().radius)
-            .hover(|this| {
-                this.bg(cx.theme().sidebar_accent)
-                    .text_color(cx.theme().sidebar_accent_foreground)
-            })
-            .child(account_head.size_8().min_w_8().min_h_8())
-            .when(!iconized_sidebar, |this| this.child(ShrinkingText::new(account_name)))
+            .pl_1()
+            .pr_2()
+            .py_1()
+            .rounded(theme.radius)
+            .cursor_pointer()
+            .text_sm()
+            .hover(|s| s.bg(theme.secondary_hover))
+            .child(account_head.size_7().min_w_7().min_h_7().rounded(theme.radius))
+            .child(div().max_w(px(140.)).overflow_hidden().whitespace_nowrap().text_ellipsis().child(account_name))
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
             .on_click({
                 let data = self.data.clone();
                 move |_, window, cx| {
@@ -943,212 +891,48 @@ impl Render for LauncherUI {
                         crate::root::start_new_account_login(&data.backend_handle, window, cx);
                         return;
                     }
-
                     let build = crate::modals::accounts::build_accounts_sheet(&data, window, cx);
-                    window.open_sheet_at(gpui_component::Placement::Left, cx, build);
+                    window.open_sheet_at(gpui_component::Placement::Right, cx, build);
                 }
             });
 
-        let settings_button = div()
-            .id("settings-button")
-            .p_2()
-            .rounded(cx.theme().radius)
-            .hover(|this| {
-                this.bg(cx.theme().sidebar_accent)
-                    .text_color(cx.theme().sidebar_accent_foreground)
-            })
-            .child(PandoraIcon::Settings)
-            .on_click({
-                let data = self.data.clone();
-                move |_, window, cx| {
-                    crate::settings::open_settings_window(window, &data, cx);
-                }
-            });
-        let bug_report_button = div()
-            .id("bug-report-button")
-            .p_2()
-            .rounded(cx.theme().radius)
-            .hover(|this| {
-                this.bg(cx.theme().sidebar_accent)
-                    .text_color(cx.theme().sidebar_accent_foreground)
-            })
-            .child(PandoraIcon::Bug)
-            .tooltip(move |window, cx| {
-                Tooltip::new(t::system::report_bug()).build(window, cx)
-            })
-            .on_click({
-                move |_, window, cx| {
-                    open_bug_report_url(window, cx);
-                }
-            });
-        let discord_invite = option_env!("FLUX_DISCORD_INVITE").unwrap_or("");
-        let discord_button = div()
-            .id("discord-button")
-            .p_2()
-            .rounded(cx.theme().radius)
-            .hover(|this| {
-                this.bg(cx.theme().sidebar_accent)
-                    .text_color(cx.theme().sidebar_accent_foreground)
-            })
-            .child(PandoraIcon::Discord)
-            .tooltip(move |window, cx| {
-                Tooltip::new(t::system::join_discord()).build(window, cx)
-            })
-            .on_click({
-                move |_, _, cx| {
-                    cx.open_url(discord_invite);
-                }
-            });
+        let update = self.update.clone().map(|update| {
+            let send = self.data.backend_handle.clone();
+            Button::new("nav-update")
+                .label(t::system::update::available())
+                .success()
+                .compact()
+                .small()
+                .icon(PandoraIcon::Download)
+                .on_click(move |_, window, cx| crate::modals::update_prompt::open_update_prompt(update.clone(), send.clone(), window, cx))
+                .into_any_element()
+        });
 
-        let collapse_button = div()
-            .id("sidebar-collapse")
-            .p_1()
-            .flex_shrink_0()
-            .rounded(cx.theme().radius)
-            .cursor_pointer()
-            .text_color(cx.theme().muted_foreground)
-            .hover(|this| this.bg(cx.theme().sidebar_accent).text_color(cx.theme().sidebar_accent_foreground))
-            .child(Icon::new(if iconized_sidebar { PandoraIcon::PanelLeftOpen } else { PandoraIcon::PanelLeftClose }).size_4())
-            .tooltip(move |window, cx| Tooltip::new(if iconized_sidebar { "Expand sidebar" } else { "Collapse sidebar" }).build(window, cx))
-            // The header is a window-drag area: keep the press for the button.
-            .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                window.prevent_default();
-                cx.stop_propagation();
-            })
-            .on_click(cx.listener(move |launcher, _, _, cx| {
-                launcher.toggle_sidebar(cx);
-            }));
-        let header_drag_state = window.use_keyed_state("sidebar-header-drag-state", cx, |_, _| TitleBarState::default());
-        let header = h_flex()
-            .id("sidebar-header")
-            .window_control_area(WindowControlArea::Drag)
-            .on_mouse_down_out(window.listener_for(&header_drag_state, |state, _, _, _| {
-                state.should_move = false;
-            }))
-            .when(cfg!(target_os = "linux"), |this| {
-                this.on_double_click(|_, window, _| window.zoom_window())
-            })
-            .when(cfg!(target_os = "macos"), |this| {
-                this.on_double_click(|_, window, _| window.titlebar_double_click())
-            })
-            .on_mouse_down(
-                MouseButton::Left,
-                window.listener_for(&header_drag_state, |state, _, _, _| {
-                    state.should_move = true;
-                }),
-            )
-            .on_mouse_up(
-                MouseButton::Left,
-                window.listener_for(&header_drag_state, |state, _, _, _| {
-                    state.should_move = false;
-                }),
-            )
-            .on_mouse_move(window.listener_for(&header_drag_state, |state, _, window, _| {
-                if state.should_move {
-                    state.should_move = false;
-                    window.start_window_move();
-                }
-            }))
-            .when_else(cfg!(target_os = "macos"), |this| this.pt(px(41.0)), |this| this.pt(px(14.0)))
-            .when_else(iconized_sidebar, |this| this.px_1().flex_col().gap_1(), |this| this.px_3().gap_2())
-            .pb_2()
-            .w_full()
-            .justify_center()
-            .items_center()
-            .text_size(rems(0.9375))
-            .child(gpui::img(ImageSource::Resource(Resource::Embedded("images/branding/logo.png".into())))
-                .size_7().min_w_7().min_h_7().object_fit(ObjectFit::Contain))
-            .when(!iconized_sidebar, |this| this.child(div()
-                .font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BOLD)
-                .text_size(rems(1.25))
-                .whitespace_nowrap()
-                .child("FLUX")))
-            .child(collapse_button);
-        // Chat and Friends: round buttons above Settings.
-        let unread = crate::chat::Network::ALL.iter().any(|n| !crate::chat::state(*n).unread.is_empty());
-        let requests = crate::chat::Network::ALL.iter().any(|n| crate::chat::state(*n).requests.iter().any(|r| r.incoming));
-        let round = |id: &'static str, icon: PandoraIcon, tip: &'static str, dot: bool, view: crate::chat::panel::ChatView, cx: &mut Context<Self>| {
-            div()
-                .id(id)
-                .relative()
-                .size(px(38.))
-                .flex_shrink_0()
-                .rounded_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .cursor_pointer()
-                .bg(cx.theme().sidebar_accent.opacity(0.6))
-                .hover(|this| this.bg(cx.theme().primary).text_color(cx.theme().primary_foreground))
-                .child(Icon::new(icon).size_4())
-                .when(dot, |this| this.child(div().absolute().top(px(1.)).right(px(1.)).size(px(10.)).rounded_full().bg(gpui::rgb(0xff5d5d))
-                    .border_2().border_color(cx.theme().sidebar)))
-                .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
-                .on_click(cx.listener(move |launcher, _, window, cx| launcher.open_chat(view, window, cx)))
+        let top_nav = TitleBar {
+            left_content: vec![
+                nav.into_any_element(),
+                div().flex_1().into_any_element(),
+                self.search.clone().into_any_element(),
+                div().flex_1().into_any_element(),
+            ],
+            right_content: update.into_iter()
+                .chain([import.into_any_element(), tools.into_any_element(), chat.into_any_element(), account.into_any_element()])
+                .collect(),
+            content_only: !crate::root::should_render_custom_titlebar(),
         };
-        let social = h_flex()
-            .when(iconized_sidebar, |this| this.flex_col())
-            .gap_2()
-            .pb_2()
-            .child(round("chat-button", PandoraIcon::MessageCircle, "Chat", unread, crate::chat::panel::ChatView::Chats, cx))
-            .child(round("friends-button", PandoraIcon::Users, "Friends", requests, crate::chat::panel::ChatView::Friends, cx));
-        let footer_buttons = h_flex()
-            .when(iconized_sidebar, |this| this.flex_col())
-            .child(settings_button)
-            .when(option_env!("FLUX_ISSUES_URL").is_some(), |this| this.child(bug_report_button))
-            .when(!discord_invite.is_empty(), |this| this.child(discord_button));
-        let footer = v_flex().pb_2().px_2().items_center().min_w_full().max_w_full().w_full().child(social).child(footer_buttons);
-        let mode_switch = {
-            let segment = |id: &'static str, label: &'static str, icon: PandoraIcon, mode: LibraryMode, cx: &mut Context<Self>| {
-                let active = InterfaceConfig::get(cx).library_mode == mode;
-                h_flex()
-                    .id(id)
-                    .flex_1()
-                    .justify_center()
-                    .gap_1()
-                    .py_1()
-                    .rounded(cx.theme().radius)
-                    .cursor_pointer()
-                    .text_xs()
-                    .overflow_hidden()
-                    .when(active, |this| this.bg(cx.theme().primary).text_color(cx.theme().primary_foreground))
-                    .when(!active, |this| this.text_color(cx.theme().muted_foreground).hover(|this| this.text_color(cx.theme().foreground)))
-                    .child(Icon::new(icon).size_4())
-                    .when(!iconized_sidebar, |this| this.child(label))
-                    .on_click(cx.listener(move |launcher, _, window, cx| launcher.switch_mode(mode, window, cx)))
-            };
-            h_flex()
-                .when(iconized_sidebar, |this| this.flex_col())
-                .w_full()
-                .p_1()
-                .gap_1()
-                .rounded(cx.theme().radius)
-                .bg(cx.theme().sidebar_accent.opacity(0.5))
-                .child(segment("mode-minecraft", "Minecraft", PandoraIcon::Pickaxe, LibraryMode::Minecraft, cx))
-                .child(segment("mode-games", "Games", PandoraIcon::Gamepad2, LibraryMode::Games, cx))
-        };
-        let account_card = v_flex()
-            .px_2()
-            .pb_3()
-            .mb_2()
-            .gap_2()
-            .border_b_1()
-            .border_color(cx.theme().sidebar_border)
-            .w_full()
-            .child(account_button)
-            .child(mode_switch);
-        let sidebar = v_flex()
+
+        let search = self.search.clone();
+        div()
             .size_full()
-            .min_size_full()
-            .max_size_full()
-            .bg(cx.theme().sidebar)
-            .text_color(cx.theme().sidebar_foreground)
-            .child(header)
-            .child(account_card)
-            .child(sidebar_pages)
-            .child(footer);
-
-        ResizePanel::new(&self.sidebar_state, sidebar, self.page.clone().render(&self, window, cx))
+            .bg(theme.background)
+            // Ctrl+K: search everything.
+            .on_key_down(move |event, window, cx| {
+                if event.keystroke.key == "k" && (event.keystroke.modifiers.control || event.keystroke.modifiers.platform) {
+                    crate::component::global_search::GlobalSearch::focus(&search, window, cx);
+                    cx.stop_propagation();
+                }
+            })
+            .child(self.page.clone().render(&self, top_nav.into_any_element(), window, cx))
     }
 }
 

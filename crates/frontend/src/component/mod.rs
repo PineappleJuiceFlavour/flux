@@ -2,6 +2,7 @@ pub mod clipped_element;
 pub mod content_list;
 pub mod error_alert;
 pub mod generic_title_bar;
+pub mod global_search;
 pub mod horizontal_sections;
 pub mod instance_dropdown;
 pub mod instance_list;

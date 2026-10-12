@@ -144,6 +144,9 @@ pub struct InterfaceConfig {
     pub library_mode: LibraryMode,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub games_layout: GamesLayout,
+    /// The Library page's view (grid or list), kept while Home shows the row.
+    #[serde(default = "default_library_view", deserialize_with = "schema::try_deserialize")]
+    pub games_library_view: GamesLayout,
     /// The layout the Games screen opens in (the sidebar's Home, and at startup).
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub games_default_layout: GamesLayout,
@@ -203,6 +206,10 @@ pub enum GamesSort {
     PlayTime,
     /// The player's own row (`custom_order`): only the games they added, in their order.
     Custom,
+}
+
+fn default_library_view() -> GamesLayout {
+    GamesLayout::Grid
 }
 
 fn default_games_row_length() -> u32 {
@@ -433,6 +440,7 @@ impl Default for InterfaceConfig {
             library_mode: LibraryMode::default(),
             games_layout: GamesLayout::default(),
             games_default_layout: GamesLayout::default(),
+            games_library_view: GamesLayout::Grid,
             games_row_length: default_games_row_length(),
             games_sort: GamesSort::default(),
             custom_order: Vec::new(),

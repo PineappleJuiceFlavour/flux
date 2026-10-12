@@ -80,7 +80,7 @@ fn squash(text: &str) -> String {
 
 /// Does the search match this game? Every word (squashed) must appear in the name, so word order,
 /// spaces and punctuation don't matter ("skate 3", "3 skate", "hit&run").
-fn search_matches(query: &str, name: &str) -> bool {
+pub fn search_matches(query: &str, name: &str) -> bool {
     let name = squash(name);
     let whole = squash(query);
     whole.is_empty() || name.contains(&whole) || query.split_whitespace().map(squash).filter(|w| !w.is_empty()).all(|w| name.contains(&w))
@@ -354,7 +354,7 @@ impl GamesHomePage {
 
     /// Up / down in the Library grid: the card above or below (across platform sections).
     fn step_rows(&mut self, down: bool, window: &Window, cx: &mut Context<Self>) {
-        let sidebar = InterfaceConfig::get(cx).sidebar_width.max(48.);
+        let sidebar = 0.0f32; // no sidebar: the top bar holds navigation
         let width = (window.viewport_size().width.as_f32() - sidebar - 48. - 12.).max(216.);
         let cols = ((width + 16.) / 216.).floor().max(1.) as usize;
         let sections = self.sections_shown(cx);
@@ -541,6 +541,14 @@ fn controller_hints(layout: GamesLayout) -> AnyElement {
         .into_any_element()
 }
 
+static OPEN_ART: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Tools › Art: open the game-art panel (SteamGridDB key, refresh all art) on the Games screen.
+pub fn open_art_panel(cx: &mut App) {
+    OPEN_ART.store(true, std::sync::atomic::Ordering::Relaxed);
+    cx.refresh_windows();
+}
+
 /// Open the Games screen in the player's chosen default layout.
 pub fn reset_layout(cx: &mut App) {
     let config = InterfaceConfig::get_mut(cx);
@@ -548,26 +556,9 @@ pub fn reset_layout(cx: &mut App) {
 }
 
 impl Page for GamesHomePage {
-    fn controls(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let layout = InterfaceConfig::get(cx).games_layout;
-        let tab = |id: &'static str, label: &'static str, value: GamesLayout, cx: &mut Context<Self>| {
-            let active = layout == value;
-            v_flex().id(id).cursor_pointer().pt_1().gap_1()
-                .child(div().px_1().text_sm().font_weight(FontWeight::SEMIBOLD)
-                    .text_color(if active { cx.theme().foreground } else { cx.theme().muted_foreground })
-                    .child(label))
-                .child(div().h(px(2.)).rounded_full().when(active, |this| this.bg(cx.theme().primary)))
-                // The title bar is a window-drag area: claim the press so it doesn't move the window.
-                .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-                .on_click(move |_, _, cx| {
-                    InterfaceConfig::get_mut(cx).games_layout = value;
-                    cx.refresh_windows();
-                })
-        };
-        h_flex().gap_5()
-            .child(tab("layout-row", "Home", GamesLayout::Shelf, cx))
-            .child(tab("layout-grid", "Library", GamesLayout::Grid, cx))
-            .child(tab("layout-list", "List", GamesLayout::List, cx))
+    // Home / Library are in the top bar; Library's grid / list switch is in its toolbar.
+    fn controls(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
     }
 
     fn scrollable(&self, _cx: &App) -> bool {
@@ -709,6 +700,9 @@ impl Render for GamesHomePage {
             self.focused_once = true;
             window.focus(&self.focus, cx);
         }
+        if OPEN_ART.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            self.art_open = true;
+        }
         let layout = InterfaceConfig::get(cx).games_layout;
         // Bring the selected card into view once it has been drawn where it now is.
         if self.reveal_frames > 0 {
@@ -726,7 +720,7 @@ impl Render for GamesHomePage {
         let selected = self.selected.as_ref().and_then(|id| list.iter().find(|g| &g.id == id)).cloned();
 
         let viewport = window.viewport_size();
-        let sidebar = InterfaceConfig::get(cx).sidebar_width.max(48.);
+        let sidebar = 0.0f32; // no sidebar: the top bar holds navigation
         let size = size(viewport.width - px(sidebar), viewport.height - px(44.));
 
         if total == 0 {
@@ -797,8 +791,22 @@ impl GamesHomePage {
         } else {
             format!("{matching} of {total} games")
         };
+        let layout = config.games_layout;
+        let view = |id: &'static str, label: &'static str, value: GamesLayout, cx: &mut Context<Self>| {
+            let on = layout == value;
+            div().id(id).px_3().py_1().rounded_md().cursor_pointer().text_sm().font_weight(FontWeight::SEMIBOLD)
+                .when(on, |this| this.bg(cx.theme().primary).text_color(cx.theme().primary_foreground))
+                .when(!on, |this| this.text_color(cx.theme().muted_foreground))
+                .child(label)
+                .on_click(move |_, _, cx| {
+                    let config = InterfaceConfig::get_mut(cx);
+                    config.games_layout = value;
+                    config.games_library_view = value;
+                    cx.refresh_windows();
+                })
+        };
         h_flex().px_6().pt_4().pb_2().gap_3().items_center()
-            .child(div().w(px(260.)).child(Input::new(&self.search).small()))
+            .when(layout != GamesLayout::Shelf, |this| this.child(div().font_weight(FontWeight::BOLD).text_xl().mr_1().child("Library")))
             .child(Button::new("filters").label(if active > 0 { format!("Filters ({active})") } else { "Filters".into() })
                 .when(self.filters_open || active > 0, |b| b.primary())
                 .on_click(cx.listener(|page, _, _, cx| {
@@ -812,11 +820,13 @@ impl GamesHomePage {
                 }))))
             .child(div().text_xs().text_color(cx.theme().muted_foreground).whitespace_nowrap().child(count))
             .child(div().flex_1())
-            .child(Button::new("art").ghost().label("Art").when(self.art_open, |b| b.primary()).on_click(cx.listener(|page, _, _, cx| {
-                page.art_open = !page.art_open;
+            .when(layout != GamesLayout::Shelf, |this| this.child(h_flex().p_0p5().gap_0p5().rounded_lg().bg(cx.theme().secondary)
+                .child(view("view-grid", "Grid", GamesLayout::Grid, cx))
+                .child(view("view-list", "List", GamesLayout::List, cx))))
+            .when(self.art_open, |this| this.child(Button::new("art").primary().label("Close art").on_click(cx.listener(|page, _, _, cx| {
+                page.art_open = false;
                 cx.notify();
-            })))
-            .child(Button::new("import-games").ghost().label("Import games").on_click(|_, window, cx| root::switch_page(PageType::ImportGames, &[], window, cx)))
+            }))))
             .child(Button::new("add-game").ghost().label("+ Add game").on_click(|_, window, cx| root::switch_page(PageType::AddGame, &[], window, cx)))
             .into_any_element()
     }
@@ -1174,8 +1184,7 @@ impl GamesHomePage {
     fn render_grid(&mut self, list: &[LibraryGame], selected: Option<&LibraryGame>, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let custom = InterfaceConfig::get(cx).games_sort == GamesSort::Custom;
-        let mut body = v_flex().size_full().px_6().pb_6().gap_3()
-            .child(div().font_family(crate::pages::home_page::DISPLAY_FONT).font_weight(FontWeight::BLACK).text_size(px(26.)).child("Game library"));
+        let mut body = v_flex().size_full().px_6().pb_6().gap_3();
         if list.is_empty() {
             body = body.child(div().text_sm().child(self.empty_message(cx)));
         }

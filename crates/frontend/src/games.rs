@@ -487,7 +487,24 @@ impl Detection {
 
 /// Fix entries saved before Flux knew better (e.g. a port added by its shar_rs.exe instead of its
 /// folder). Names, art and background choices the player made are kept.
+/// Steam games take Steam's own time played and last played (Steam starts them, so Flux can't
+/// time them itself); whichever is higher or newer is kept, so nothing goes backwards.
+pub fn sync_steam_playtime(cx: &mut App) {
+    let times = crate::importers::steam_playtimes();
+    if times.is_empty() {
+        return;
+    }
+    for game in &mut InterfaceConfig::get_mut(cx).games {
+        let Some(&(minutes, last)) = game.steam_appid.and_then(|id| times.get(&id)) else { continue };
+        game.play_seconds = game.play_seconds.max(minutes * 60);
+        if last > 0 && game.last_played.is_none_or(|t| t < last) {
+            game.last_played = Some(last);
+        }
+    }
+}
+
 pub fn normalize_library(cx: &mut App) {
+    sync_steam_playtime(cx);
     let config = InterfaceConfig::get_mut(cx);
     for game in &mut config.games {
         if game.kind != GameKind::SharPort

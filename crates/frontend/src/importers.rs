@@ -135,6 +135,47 @@ pub fn steam_library_folders(root: &Path) -> Vec<PathBuf> {
     libs
 }
 
+/// Time played and last played per Steam app, from every Steam account on this PC
+/// (`userdata/<account>/config/localconfig.vdf`): app id -> (minutes, unix time). Accounts' minutes
+/// add up; the latest time wins.
+pub fn steam_playtimes() -> HashMap<u32, (u64, i64)> {
+    let mut out: HashMap<u32, (u64, i64)> = HashMap::new();
+    let Some(root) = steam_root() else { return out };
+    for user in std::fs::read_dir(root.join("userdata")).into_iter().flatten().flatten() {
+        let text = std::fs::read_to_string(user.path().join("config").join("localconfig.vdf")).unwrap_or_default();
+        parse_playtimes(&text, &mut out);
+    }
+    out
+}
+
+/// The "Playtime" (minutes) and "LastPlayed" (unix time) under each app id key of a localconfig.vdf.
+pub fn parse_playtimes(text: &str, out: &mut HashMap<u32, (u64, i64)>) {
+    let mut app = None;
+    for line in text.lines() {
+        let t = line.trim();
+        // A block key: an app id starts that app's block (other keys, like "cloud", are blocks inside it).
+        if t.starts_with('"') && t.ends_with('"') && t.matches('"').count() == 2 {
+            if let Ok(id) = t.trim_matches('"').parse::<u32>() {
+                app = Some(id);
+            }
+            continue;
+        }
+        let (Some(id), Some(rest)) = (app, t.strip_prefix('"')) else { continue };
+        let mut parts = rest.split('"');
+        let (Some(key), _, Some(value)) = (parts.next(), parts.next(), parts.next()) else { continue };
+        match key {
+            "Playtime" => if let Ok(minutes) = value.parse::<u64>() {
+                out.entry(id).or_default().0 += minutes;
+            },
+            "LastPlayed" => if let Ok(when) = value.parse::<i64>() {
+                let entry = out.entry(id).or_default();
+                entry.1 = entry.1.max(when);
+            },
+            _ => {},
+        }
+    }
+}
+
 /// App names and types from Steam's own app cache (binary KeyValues, `appinfo.vdf` v28/v29).
 pub fn steam_appinfo(root: &Path) -> HashMap<u32, (String, String)> {
     let mut out = HashMap::new();
@@ -598,6 +639,37 @@ mod tests {
             for f in all.iter().take(6) {
                 println!("   {} | installed {} | {} | {:?}", f.name, f.installed, f.path.display(), f.launch_uri.as_ref().or(f.install_uri.as_ref()));
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod steam_playtime_tests {
+    use std::collections::HashMap;
+
+    #[test]
+    fn reads_playtime_and_last_played() {
+        let vdf = "\"UserLocalConfigStore\"\n{\n\t\"Software\"\n\t{\n\t\t\"Valve\"\n\t\t{\n\t\t\t\"Steam\"\n\t\t\t{\n\t\t\t\t\"apps\"\n\t\t\t\t{\n\
+            \t\t\t\t\t\"4000\"\n\t\t\t\t\t{\n\t\t\t\t\t\t\"LastPlayed\"\t\t\"1791009969\"\n\t\t\t\t\t\t\"cloud\"\n\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\"quota_files\"\t\t\"1\"\n\t\t\t\t\t\t}\n\
+            \t\t\t\t\t\t\"Playtime2wks\"\t\t\"30\"\n\t\t\t\t\t\t\"Playtime\"\t\t\"106659\"\n\t\t\t\t\t}\n\
+            \t\t\t\t\t\"105600\"\n\t\t\t\t\t{\n\t\t\t\t\t\t\"Playtime\"\t\t\"15174\"\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n";
+        let mut out = HashMap::new();
+        super::parse_playtimes(vdf, &mut out);
+        assert_eq!(out[&4000], (106659, 1791009969), "fields after a nested block still count");
+        assert_eq!(out[&105600], (15174, 0));
+        // A second account adds its minutes.
+        super::parse_playtimes(vdf, &mut out);
+        assert_eq!(out[&105600].0, 30348);
+    }
+
+    /// FLUX_STEAM_TIMES=1: what this PC's Steam accounts report.
+    #[test]
+    fn this_pc() {
+        if std::env::var_os("FLUX_STEAM_TIMES").is_none() { return }
+        let mut times: Vec<_> = super::steam_playtimes().into_iter().collect();
+        times.sort_by_key(|(_, (m, _))| std::cmp::Reverse(*m));
+        for (id, (minutes, last)) in times.iter().take(6) {
+            println!("STEAM {id}: {:.0} h, last {last}", *minutes as f64 / 60.);
         }
     }
 }

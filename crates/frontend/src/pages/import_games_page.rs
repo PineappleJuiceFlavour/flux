@@ -152,6 +152,7 @@ impl ImportGamesPage {
             }).await;
             _ = page.update_in(cx, |page, window, cx| {
                 InterfaceConfig::get_mut(cx).games.extend(new_games);
+                crate::games::sync_steam_playtime(cx);
                 games::find_missing_web_art(cx);
                 page.busy = None;
                 page.results.clear();

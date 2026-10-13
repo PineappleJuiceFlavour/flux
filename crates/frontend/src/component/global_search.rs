@@ -34,6 +34,7 @@ pub struct GlobalSearch {
 const PLACES: &[(&str, &str)] = &[
     ("Emulators", "emulators"),
     ("Controllers", "controllers"),
+    ("SK8V: Skate 3 in GTA V", "sk8v"),
     ("Add a game", "add-game"),
     ("Import games", "import-games"),
     ("Browse mods", "mods"),
@@ -47,6 +48,7 @@ fn place(key: &str) -> Target {
     match key {
         "emulators" => Target::Page(PageType::Emulators),
         "controllers" => Target::Page(PageType::Controllers),
+        "sk8v" => Target::Page(PageType::Sk8v),
         "add-game" => Target::Page(PageType::AddGame),
         "import-games" => Target::Page(PageType::ImportGames),
         "mods" => Target::Page(PageType::Modrinth { installing_for: None }),

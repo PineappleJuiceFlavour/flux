@@ -90,6 +90,13 @@ pub enum MessageToBackend {
         rpcs3_exe: Arc<std::path::Path>,
         modal_action: ModalAction,
     },
+    /// Install SK8V (Skate 3 in GTA V Legacy) from its latest release with the player's own games.
+    InstallSk8v {
+        skate: Arc<std::path::Path>,
+        gta: Arc<std::path::Path>,
+        goofy: bool,
+        modal_action: ModalAction,
+    },
     DeleteInstance {
         id: InstanceID,
     },

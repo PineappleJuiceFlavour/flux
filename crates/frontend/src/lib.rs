@@ -35,6 +35,7 @@ pub mod win_native;
 pub mod importers;
 pub mod xenia_config;
 pub mod rpcs3_config;
+pub mod sk8v;
 pub mod component;
 pub mod data_asset_loader;
 pub mod entity;

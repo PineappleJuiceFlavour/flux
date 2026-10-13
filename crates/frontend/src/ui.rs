@@ -15,7 +15,7 @@ use crate::interface_config::GamesLayout;
 use crate::{
     component::{generic_title_bar::TitleBarState, main_title_bar::MainTitleBar, menu::{MenuGroup, MenuGroupItem}, page_path::PagePath, resize_panel::{ResizePanel, ResizePanelState}, shrinking_text::ShrinkingText}, entity::{
         DataEntities, account::AccountExt, instance::{InstanceAddedEvent, InstanceEntries, InstanceEntry, InstanceModifiedEvent, InstanceMovedToTopEvent, InstanceRemovedEvent}
-    }, icon::PandoraIcon, interface_config::{InterfaceConfig, LibraryMode}, pages::{home_page::HomePage, game_page::GamePage, add_game_page::AddGamePage, emulators_page::EmulatorsPage, controllers_page::ControllersPage, curseforge_page::CurseforgeSearchPage, import::ImportPage, instance::instance_page::InstancePage, instances_page::InstancesPage, modrinth_page::ModrinthSearchPage, modrinth_project_page::ModrinthProjectPage, page::Page, quickplay::QuickplayPage, skins_page::SkinsPage, syncing_page::SyncingPage}, png_render_cache,
+    }, icon::PandoraIcon, interface_config::{InterfaceConfig, LibraryMode}, pages::{home_page::HomePage, game_page::GamePage, add_game_page::AddGamePage, emulators_page::EmulatorsPage, controllers_page::ControllersPage, sk8v_page::Sk8vPage, curseforge_page::CurseforgeSearchPage, import::ImportPage, instance::instance_page::InstancePage, instances_page::InstancesPage, modrinth_page::ModrinthSearchPage, modrinth_project_page::ModrinthProjectPage, page::Page, quickplay::QuickplayPage, skins_page::SkinsPage, syncing_page::SyncingPage}, png_render_cache,
 };
 
 pub struct LauncherUI {
@@ -79,6 +79,8 @@ pub enum PageType {
     Emulators,
     /// PlayStation controllers as Xbox controllers.
     Controllers,
+    /// SK8V: Skate 3 in GTA V (`crate::sk8v`).
+    Sk8v,
 }
 
 impl PageType {
@@ -91,6 +93,7 @@ impl PageType {
             PageType::ImportGames => "Import games".into(),
             PageType::Emulators => "Emulators".into(),
             PageType::Controllers => "Controllers".into(),
+            PageType::Sk8v => "SK8V".into(),
             PageType::Quickplay => t::quickplay::title().into(),
             PageType::Instances => t::instance::title().into(),
             PageType::Skins => t::skins::title().into(),
@@ -137,6 +140,7 @@ pub enum LauncherPage {
     AddGame(Entity<AddGamePage>),
     Emulators(Entity<EmulatorsPage>),
     Controllers(Entity<ControllersPage>),
+    Sk8v(Entity<Sk8vPage>),
 }
 
 impl LauncherPage {
@@ -164,6 +168,7 @@ impl LauncherPage {
             LauncherPage::AddGame(entity) => process(entity, window, cx),
             LauncherPage::Emulators(entity) => process(entity, window, cx),
             LauncherPage::Controllers(entity) => process(entity, window, cx),
+            LauncherPage::Sk8v(entity) => process(entity, window, cx),
         };
 
         let config = InterfaceConfig::get(cx);
@@ -183,7 +188,7 @@ impl LauncherPage {
         // tabs are in the top bar.
         // Pages opened from Home (a game's Options, the Tools pages) get a Back button to Home.
         let back_home = breadcrumb.is_empty() && matches!(main_page, PageType::Game { .. } | PageType::Emulators | PageType::Controllers
-            | PageType::AddGame | PageType::ImportGames);
+            | PageType::Sk8v | PageType::AddGame | PageType::ImportGames);
         let page_bar = (main_page != PageType::GamesHome && !minecraft_top).then(|| TitleBar {
             left_content: [
                 back_home.then(|| Button::new("page-back").small().ghost().icon(PandoraIcon::ArrowLeft).label("Back").mr_2()
@@ -399,6 +404,7 @@ impl LauncherUI {
             Ok("skins") => PageType::Skins,
             Ok("quickplay") => PageType::Quickplay,
             Ok("emulators") => PageType::Emulators,
+            Ok("sk8v") => PageType::Sk8v,
             Ok(page) if page.starts_with("game:") => PageType::Game { id: page["game:".len()..].to_string().into() },
             _ => PageType::GamesHome,
         };
@@ -444,6 +450,7 @@ impl LauncherUI {
             let mut poller = crate::controller_nav::Poller::default();
             // FLUX_CHAT_OPEN=1: open the chat panel at startup (testing).
             let mut open_chat_once = std::env::var_os("FLUX_CHAT_OPEN").is_some();
+            let mut sk8v_offer_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
             loop {
                 cx.background_executor().timer(std::time::Duration::from_millis(16)).await;
                 let Some(ui) = ui.upgrade() else { break };
@@ -451,6 +458,10 @@ impl LauncherUI {
                     if open_chat_once {
                         open_chat_once = false;
                         ui.update(cx, |ui, cx| ui.open_chat(crate::chat::panel::ChatView::Chats, window, cx));
+                    }
+                    if sk8v_offer_at.is_some_and(|at| std::time::Instant::now() >= at) && window.is_window_active() {
+                        sk8v_offer_at = None;
+                        crate::pages::sk8v_page::offer(window, cx);
                     }
                     if window.is_window_active() {
                         let polled = poller.poll();
@@ -502,6 +513,7 @@ impl LauncherUI {
             PageType::ImportGames => Ok(LauncherPage::ImportGames(cx.new(|cx| crate::pages::import_games_page::ImportGamesPage::new(window, cx)))),
             PageType::Emulators => Ok(LauncherPage::Emulators(cx.new(|cx| EmulatorsPage::new(data, window, cx)))),
             PageType::Controllers => Ok(LauncherPage::Controllers(cx.new(|cx| ControllersPage::new(data, window, cx)))),
+            PageType::Sk8v => Ok(LauncherPage::Sk8v(cx.new(|cx| Sk8vPage::new(data, window, cx)))),
             PageType::Quickplay => {
                 Ok(LauncherPage::Quickplay(cx.new(|cx| QuickplayPage::new(data, window, cx))))
             },
@@ -865,6 +877,8 @@ impl Render for LauncherUI {
                         .on_click(|_, window, cx| crate::root::switch_page(PageType::Emulators, &[], window, cx)))
                     .item(PopupMenuItem::new("Controllers").icon(PandoraIcon::Gamepad2)
                         .on_click(|_, window, cx| crate::root::switch_page(PageType::Controllers, &[], window, cx)))
+                    .item(PopupMenuItem::new("SK8V: Skate 3 in GTA V").icon(PandoraIcon::Zap)
+                        .on_click(|_, window, cx| crate::root::switch_page(PageType::Sk8v, &[], window, cx)))
                     .item(PopupMenuItem::new("Art").icon(PandoraIcon::Image)
                         .on_click(|_, window, cx| {
                             crate::pages::games_home_page::open_art_panel(cx);

@@ -139,6 +139,50 @@ fn hkey(hive: Hive) -> windows::Win32::System::Registry::HKEY {
     }
 }
 
+/// A program's file version as "a.b.c.d" (its VS_FIXEDFILEINFO), e.g. GTA5.exe's "1.0.3889.0".
+#[cfg(windows)]
+pub fn file_version(exe: &Path) -> Option<String> {
+    use windows::{Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VS_FIXEDFILEINFO, VerQueryValueW}, core::PCWSTR};
+    let path = wide(exe.as_os_str());
+    unsafe {
+        let size = GetFileVersionInfoSizeW(PCWSTR(path.as_ptr()), None);
+        if size == 0 {
+            return None;
+        }
+        let mut data = vec![0u8; size as usize];
+        GetFileVersionInfoW(PCWSTR(path.as_ptr()), None, size, data.as_mut_ptr() as _).ok()?;
+        let mut ptr = std::ptr::null_mut();
+        let mut len = 0u32;
+        let root = wide("\\".as_ref());
+        if !VerQueryValueW(data.as_ptr() as _, PCWSTR(root.as_ptr()), &mut ptr, &mut len).as_bool() || (len as usize) < std::mem::size_of::<VS_FIXEDFILEINFO>() {
+            return None;
+        }
+        let info = &*(ptr as *const VS_FIXEDFILEINFO);
+        let (ms, ls) = (info.dwFileVersionMS, info.dwFileVersionLS);
+        Some(format!("{}.{}.{}.{}", ms >> 16, ms & 0xFFFF, ls >> 16, ls & 0xFFFF))
+    }
+}
+
+#[cfg(not(windows))]
+pub fn file_version(_exe: &Path) -> Option<String> {
+    None
+}
+
+/// Free bytes on the drive holding `path`.
+#[cfg(windows)]
+pub fn free_space(path: &Path) -> Option<u64> {
+    use windows::{Win32::Storage::FileSystem::GetDiskFreeSpaceExW, core::PCWSTR};
+    let path = wide(path.as_os_str());
+    let mut free = 0u64;
+    unsafe { GetDiskFreeSpaceExW(PCWSTR(path.as_ptr()), Some(&mut free), None, None).ok()? };
+    Some(free)
+}
+
+#[cfg(not(windows))]
+pub fn free_space(_path: &Path) -> Option<u64> {
+    None
+}
+
 /// A string value from the registry.
 #[cfg(windows)]
 pub fn registry_string(hive: Hive, key: &str, value: &str) -> Option<String> {

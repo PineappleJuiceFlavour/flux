@@ -8,6 +8,7 @@ pub mod import_games_page;
 pub mod add_game_page;
 pub mod emulators_page;
 pub mod controllers_page;
+pub mod sk8v_page;
 pub mod curseforge_page;
 pub mod modrinth_page;
 pub mod modrinth_project_page;

@@ -188,6 +188,15 @@ pub struct InterfaceConfig {
     /// Emulators the player pointed at their own copy of: emulator id -> program.
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub emulator_paths: std::collections::BTreeMap<String, std::path::PathBuf>,
+    /// SK8V (`crate::sk8v`): the GTA V Legacy folder the player picked, when Flux's guess was wrong.
+    #[serde(default, skip_serializing_if = "schema::skip_if_none", deserialize_with = "schema::try_deserialize")]
+    pub sk8v_gta_dir: Option<std::path::PathBuf>,
+    /// SK8V: Goofy stance (right foot forward) instead of Regular.
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub sk8v_goofy: bool,
+    /// SK8V: the "you have both games" popup was answered (Not now / Don't show again).
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub sk8v_prompt_dismissed: bool,
     /// PlayStation controllers act as Xbox controllers (`crate::controller`).
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub controller_emulation: bool,
@@ -453,6 +462,9 @@ impl Default for InterfaceConfig {
             art_version: 0,
             games: Vec::new(),
             emulator_paths: Default::default(),
+            sk8v_gta_dir: None,
+            sk8v_goofy: false,
+            sk8v_prompt_dismissed: false,
             controller_emulation: false,
             controller_mapping: Default::default(),
             content_filter_version: Default::default(),

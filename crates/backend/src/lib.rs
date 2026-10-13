@@ -24,6 +24,7 @@ mod log_reader;
 mod max_fps;
 mod max_fps_mod;
 pub mod emulator;
+pub mod sk8v;
 mod player_skin;
 mod web_art;
 mod game_info;

@@ -126,7 +126,7 @@ fn vdf_values(text: &str, key: &str) -> Vec<String> {
     }).collect()
 }
 
-fn steam_libraries(root: &Path) -> Vec<PathBuf> {
+pub fn steam_library_folders(root: &Path) -> Vec<PathBuf> {
     let text = std::fs::read_to_string(root.join("steamapps").join("libraryfolders.vdf")).unwrap_or_default();
     let mut libs: Vec<PathBuf> = vdf_values(&text, "path").into_iter().map(PathBuf::from).collect();
     if libs.is_empty() {
@@ -228,7 +228,7 @@ fn steam(installed_only: bool) -> Vec<Found> {
     let Some(root) = steam_root() else { return vec![] };
     let mut out = Vec::new();
     let mut installed_ids = BTreeSet::new();
-    for lib in steam_libraries(&root) {
+    for lib in steam_library_folders(&root) {
         let apps = lib.join("steamapps");
         for entry in std::fs::read_dir(&apps).into_iter().flatten().flatten() {
             let file = entry.file_name().to_string_lossy().to_string();

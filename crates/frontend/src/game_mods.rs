@@ -71,7 +71,10 @@ pub fn ids(game: &LibraryGame, cx: &App) -> GameIds {
     match game.kind {
         GameKind::Xbox360 => ids.title_id = disc::xbox360_title_id(&game.path),
         GameKind::Ps3 => {
-            if let Some(sfo) = ps3_sfo(&game.path).and_then(|p| std::fs::read(p).ok()) {
+            // An unpacked game folder, or a disc image (.iso) with PS3_GAME/PARAM.SFO inside.
+            let sfo = ps3_sfo(&game.path).and_then(|p| std::fs::read(p).ok())
+                .or_else(|| game.path.is_file().then(|| disc::Iso::open(&game.path)?.read_file("PS3_GAME/PARAM.SFO")).flatten());
+            if let Some(sfo) = sfo {
                 ids.serial = disc::sfo_value(&sfo, "TITLE_ID");
                 ids.app_version = disc::sfo_value(&sfo, "APP_VER").or_else(|| disc::sfo_value(&sfo, "VERSION"));
                 ids.title = disc::sfo_value(&sfo, "TITLE");
@@ -1355,5 +1358,18 @@ PPU-c00f2b02e71f7e9b04683958bda712d66af4be15:
                 println!("  {} | {} | {:?} | {}", p.name, p.title, p.versions, p.author);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod ps3_iso_tests {
+    /// FLUX_PS3_ISO=<path to a PS3 .iso>: the serial and version come from inside the image.
+    #[test]
+    fn reads_param_sfo_from_an_iso() {
+        let Some(path) = std::env::var_os("FLUX_PS3_ISO") else { return };
+        let sfo = crate::disc::Iso::open(std::path::Path::new(&path)).unwrap().read_file("PS3_GAME/PARAM.SFO").unwrap();
+        let serial = crate::disc::sfo_value(&sfo, "TITLE_ID").unwrap();
+        println!("{serial} {:?} {:?}", crate::disc::sfo_value(&sfo, "APP_VER"), crate::disc::sfo_value(&sfo, "TITLE"));
+        assert_eq!(serial.len(), 9);
     }
 }

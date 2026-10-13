@@ -57,7 +57,7 @@ impl GamePage {
         }));
     }
 
-    fn fetch_patches(&mut self, game: &LibraryGame, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn fetch_patches(&mut self, game: &LibraryGame, window: &mut Window, cx: &mut Context<Self>) {
         let ids = game_mods::ids(game, cx);
         self.mods_busy = Some("Downloading the community patches...");
         cx.notify();

@@ -471,7 +471,7 @@ impl GamePage {
                     None => format!("{serial} · version unknown."),
                 }))
                 .when(skate3, |this| this.child(div().text_sm().text_color(muted).child(
-                    "Skate 3's community patches (60 FPS, No Blur, widescreen and more) need update 1.05, and online lobbies only match players on the same version.",
+                    "This is Sony's own game update (1.05 for Skate 3), the one a real PS3 downloads. The community patches need it, and online lobbies only match players on the same version. The patches themselves come from RPCS3's patch updater (see Skate 3 mods below).",
                 )))
                 .child(h_flex().gap_2().child(Button::new("ps3-game-update").small().primary().label("Get the latest update from PlayStation")
                     .disabled(running)
@@ -603,9 +603,16 @@ impl GamePage {
             };
             card("SKATE 3 MODS")
                 .child(div().text_sm().text_color(muted).child(
-                    "Patches: the Mods tab lists Skate 3's community patches for RPCS3: 60 FPS, No Blur, Aspect Ratio (widescreen; turn on Stretch to window), \
-                     Moon Gravity and No Fall Damage. They need update 1.05.",
+                    "Patches come from RPCS3's own patch updater (the list RPCS3's Patch Manager downloads from rpcs3.net), not from PlayStation. For Skate 3: 60 FPS, No Blur, Aspect Ratio (widescreen; turn on Stretch to window), Moon Gravity and No Fall Damage. They need update 1.05. Switch them on on the Mods tab.",
                 ))
+                .child(h_flex().gap_2().child({
+                    let game = game.clone();
+                    Button::new("skate3-get-patches").small().primary().label("Get latest patches")
+                        .on_click(cx.listener(move |page, _, window, cx| {
+                            page.tab = GameTab::Mods;
+                            page.fetch_patches(&game, window, cx);
+                        }))
+                }))
                 .child(div().text_sm().text_color(muted).child(
                     "Maps, texture and file mods: add them on the Mods tab under File mods. For Skate 3, Flux puts their files in the game's \
                      dev_hdd0 USRDIR, where custom parks take over DLC park slots. Flux keeps the originals so a mod can be switched off.",

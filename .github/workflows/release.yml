@@ -8,8 +8,8 @@
 # Optional: repo variable FLUX_MSA_CLIENT_ID = Flux's Microsoft app id, once Mojang approves it;
 # repo secret FLUX_CURSEFORGE_KEY = Flux's own CurseForge API key.
 #
-# Speed: compiling everything from scratch takes about 18 minutes. The Rust build cache keeps the
-# compiled libraries, but GitHub only lets a tag's run read caches saved from the default branch,
+# Speed: compiling everything from scratch takes 12-18 minutes. The build cache keeps the
+# compiled libraries (target/), but GitHub only lets a tag's run read caches saved from the default branch,
 # so pushes to main that change the code build too (nothing is published) and save the cache;
 # release tags then only recompile Flux's own crates.
 
@@ -46,11 +46,15 @@ jobs:
           rustup toolchain install 1.99.0 --profile minimal
           rustup default 1.99.0
 
-      # Compiled dependencies from the last main build: only Flux's own crates rebuild.
-      - uses: Swatinem/rust-cache@v2
+      # Compiled dependencies from a main build: only Flux's own crates rebuild. (Not rust-cache:
+      # it prunes everything that isn't from crates.io, which is all of vendor/, and saved nothing.)
+      # Vendored crates are fingerprinted by version, not file times, so a fresh checkout reuses them.
+      - name: Restore build cache
+        id: build-cache
+        uses: actions/cache/restore@v4
         with:
-          shared-key: release
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          path: target
+          key: release-target-${{ runner.os }}-rust1.99.0-${{ hashFiles('Cargo.lock') }}
 
       - uses: actions/setup-python@v5
         with:
@@ -66,6 +70,13 @@ jobs:
         run: |
           pip install cryptography
           python scripts/ci_release.py
+
+      - name: Save build cache
+        if: github.ref == 'refs/heads/main' && steps.build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: target
+          key: release-target-${{ runner.os }}-rust1.99.0-${{ hashFiles('Cargo.lock') }}
 
       - name: Build provenance
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'

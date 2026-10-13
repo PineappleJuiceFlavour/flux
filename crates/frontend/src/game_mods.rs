@@ -1212,9 +1212,37 @@ pub fn native_menu_exe(cx: &App) -> Option<PathBuf> {
     None
 }
 
-/// Where the menu's author shares it: the EA Skate Modding Discord (the invite inside S3Native.exe).
-/// There's no public download page, so Flux opens this and installs the file the player gets there.
-pub const NATIVE_MENU_SOURCE: &str = "https://discord.gg/b46F5PQysY";
+/// The Native Menu's download: its MediaFire page (the download address on it changes, so Flux
+/// reads a fresh one each time) and the SHA-256 of the archive Flux was checked against (S3Native
+/// v1.7.6, 2026-10-08). A different file isn't installed automatically.
+pub const NATIVE_MENU_PAGE: &str = "https://www.mediafire.com/file/fs8p6yj80xf8psv/Skate_3_Native_Menu.7z/file";
+pub const NATIVE_MENU_SHA256: &str = "ef25d71b09c8fbd9dc176188b7a2a3e995736a59e7dffacc0877a973b67f0b3b";
+
+/// The file's download address on a MediaFire file page.
+pub fn mediafire_download_url(page: &str) -> Option<String> {
+    let start = page.find("href=\"https://download")? + "href=\"".len();
+    let end = page[start..].find('"')? + start;
+    let url = &page[start..end];
+    let host = url.strip_prefix("https://")?.split('/').next()?;
+    (host.ends_with(".mediafire.com") && url.contains("/fs8p6yj80xf8psv/")).then(|| url.to_string())
+}
+
+/// Download the Native Menu from its page and check it's the archive Flux knows; the saved 7z's path.
+pub async fn download_native_menu() -> Result<PathBuf, String> {
+    use sha2::Digest;
+    let page = crate::games::fetch(NATIVE_MENU_PAGE).await.map_err(|_| "Flux stopped".to_string())?.map_err(|e| e.to_string())?;
+    let url = mediafire_download_url(&String::from_utf8_lossy(&page))
+        .ok_or("Couldn't find the download on the Native Menu's MediaFire page (it may have been taken down)")?;
+    let bytes = crate::games::fetch(&url).await.map_err(|_| "Flux stopped".to_string())?.map_err(|e| e.to_string())?;
+    let sha = hex::encode(sha2::Sha256::digest(&bytes));
+    if sha != NATIVE_MENU_SHA256 {
+        return Err("The Native Menu download has changed since this Flux was made (maybe a new version), so Flux didn't install it. \
+                    Download it yourself and use Install from download, or wait for a Flux update.".into());
+    }
+    let path = crate::LAUNCHER_DIR.get().ok_or("Flux's data folder isn't set up")?.join("Skate_3_Native_Menu.7z");
+    std::fs::write(&path, &bytes).map_err(|e| format!("Couldn't save the download: {e}"))?;
+    Ok(path)
+}
 
 /// Install the Native Menu from the archive (.zip / .7z / .rar) or folder the player downloaded:
 /// unpacked into Flux's data folder, its S3Native.exe remembered and switched on.
@@ -1609,5 +1637,18 @@ mod skater_tests {
     fn real_skater_folder() {
         let Some(dir) = std::env::var_os("FLUX_SKATER_DIR") else { return };
         println!("FOUND {:?}", find_skater(std::path::Path::new(&dir), "BLUS30464"));
+    }
+}
+
+#[cfg(test)]
+mod native_menu_tests {
+    use super::mediafire_download_url;
+
+    #[test]
+    fn reads_the_download_address() {
+        let page = r#"<a class="input popsok" aria-label="Download file" href="https://download848.mediafire.com/abc123/fs8p6yj80xf8psv/Skate_3_Native_Menu.7z" id="downloadButton">"#;
+        assert_eq!(mediafire_download_url(page).as_deref(), Some("https://download848.mediafire.com/abc123/fs8p6yj80xf8psv/Skate_3_Native_Menu.7z"));
+        assert!(mediafire_download_url(r#"href="https://download1.evil.example/fs8p6yj80xf8psv/x.7z""#).is_none());
+        assert!(mediafire_download_url(r#"href="https://download1.mediafire.com/other/file.7z""#).is_none());
     }
 }

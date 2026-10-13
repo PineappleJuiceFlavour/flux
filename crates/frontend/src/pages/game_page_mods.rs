@@ -468,8 +468,20 @@ impl GamePage {
         if skate3 && let Some(from) = std::env::var_os("FLUX_NATIVE_MENU_INSTALL")
             && !MENU_TEST.swap(true, std::sync::atomic::Ordering::SeqCst)
         {
-            let result = game_mods::install_native_menu(std::path::Path::new(&from), cx);
-            self.mods_message = Some(match result { Ok(t) => (t.into(), false), Err(e) => (e.into(), true) });
+            if from == "download" {
+                self.mods_busy = Some("Downloading the Native Menu (about 50 MB)...");
+                self._mods_task = Some(cx.spawn_in(window, async move |page, cx| {
+                    let downloaded = game_mods::download_native_menu().await;
+                    _ = page.update(cx, |page, cx| {
+                        page.mods_busy = None;
+                        let result = downloaded.and_then(|archive| game_mods::install_native_menu(&archive, cx));
+                        page.note(result, cx);
+                    });
+                }));
+            } else {
+                let result = game_mods::install_native_menu(std::path::Path::new(&from), cx);
+                self.mods_message = Some(match result { Ok(t) => (t.into(), false), Err(e) => (e.into(), true) });
+            }
         }
         let skate3_cards = skate3.then(|| {
             let config = InterfaceConfig::get(cx);
@@ -488,11 +500,27 @@ impl GamePage {
                     .child(div().text_sm().child("Start the Native Menu when I play Skate 3")))
                 .child(div().text_xs().text_color(muted).child(match &menu {
                     Some(exe) => format!("Menu: {}", crate::privacy::path(exe)),
-                    None => "Not installed. Its author shares it in the EA Skate Modding Discord: Get the Native Menu opens it, then Install from download sets it up.".to_string(),
+                    None => "Not installed yet: Install the Native Menu downloads it and sets it up.".to_string(),
                 }))
                 .child(h_flex().gap_2().flex_wrap()
-                    .child(Button::new("skate3-menu-get").small().when(menu.is_none(), |b| b.primary()).label("Get the Native Menu")
-                        .on_click(|_, _, cx| cx.open_url(game_mods::NATIVE_MENU_SOURCE)))
+                    .child(Button::new("skate3-menu-get").small().when(menu.is_none(), |b| b.primary())
+                        .label(if menu.is_some() { "Reinstall" } else { "Install the Native Menu" }).disabled(self.mods_busy.is_some())
+                        .on_click(cx.listener(|page, _, window, cx| {
+                            page.mods_busy = Some("Downloading the Native Menu (about 50 MB)...");
+                            cx.notify();
+                            page._mods_task = Some(cx.spawn_in(window, async move |page, cx| {
+                                let downloaded = game_mods::download_native_menu().await;
+                                _ = page.update(cx, |page, cx| {
+                                    page.mods_busy = None;
+                                    let result = downloaded.and_then(|archive| {
+                                        let result = game_mods::install_native_menu(&archive, cx);
+                                        _ = std::fs::remove_file(&archive);
+                                        result
+                                    });
+                                    page.note(result, cx);
+                                });
+                            }));
+                        })))
                     .child(Button::new("skate3-menu-install").small().label("Install from download")
                         .on_click(cx.listener(|page, _, window, cx| {
                             page.pick(false, "Choose the Native Menu you downloaded (.zip / .7z / .rar)", window, cx, |page, path, cx| {

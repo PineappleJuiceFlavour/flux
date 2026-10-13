@@ -678,7 +678,8 @@ impl BackendState {
 
                     credentials.msa_access = Some(msa_tokens.access);
                     credentials.msa_refresh = msa_tokens.refresh;
-                    credentials.msa_refresh_force_client_id = None;
+                    // Remember which Microsoft app issued it (see auth refresh_msa).
+                    credentials.msa_refresh_force_client_id = Some(auth::constants::CLIENT_ID.into());
                 },
                 auth::credentials::AuthStageWithData::MsaRefresh(refresh) => {
                     log::debug!("Auth Flow: MsaRefresh");

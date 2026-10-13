@@ -187,8 +187,11 @@ impl Authenticator {
     }
 
     pub async fn refresh_msa(&mut self, refresh: &str, force_client_id: &Option<Arc<str>>) -> Result<Option<MsaTokens>, MsaAuthorizationError> {
-        let client = if let Some(force_client_id) = force_client_id && &**force_client_id != constants::CLIENT_ID {
-            &Client::new(ClientId::new(force_client_id.to_string()))
+        // The app that issued this refresh token: recorded on sign-in; nothing recorded means the
+        // account signed in before Flux had its own app, through Pandora's.
+        let issuer = force_client_id.as_deref().unwrap_or(constants::PANDORA_CLIENT_ID);
+        let client = if issuer != constants::CLIENT_ID {
+            &Client::new(ClientId::new(issuer.to_string()))
                 .set_auth_type(oauth2::AuthType::RequestBody)
                 .set_auth_uri(AuthUrl::new(constants::AUTH_URL.to_string()).unwrap())
                 .set_token_uri(TokenUrl::new(constants::TOKEN_URL.to_string()).unwrap())

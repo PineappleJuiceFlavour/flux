@@ -2,9 +2,12 @@
 /// name, so a Flux-branded sign-in needs Flux's own Azure app, approved by Mojang for Minecraft
 /// services: build with `FLUX_MSA_CLIENT_ID=<id> cargo build --release`. Without it Flux uses
 /// Pandora Launcher's approved app, and Microsoft's page says "Pandora Launcher".
+/// Pandora Launcher's Microsoft app, which every Flux sign-in used before Flux's own was approved.
+/// Their refresh tokens only work with this app, so those accounts keep refreshing through it.
+pub const PANDORA_CLIENT_ID: &str = "e5226706-5096-431d-9516-ae48fe263401";
 pub const CLIENT_ID: &str = match option_env!("FLUX_MSA_CLIENT_ID") {
     Some(id) => id,
-    None => "e5226706-5096-431d-9516-ae48fe263401",
+    None => PANDORA_CLIENT_ID,
 };
 pub const AUTH_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize";
 pub const TOKEN_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";

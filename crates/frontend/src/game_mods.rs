@@ -1212,6 +1212,49 @@ pub fn native_menu_exe(cx: &App) -> Option<PathBuf> {
     None
 }
 
+/// Where the menu's author shares it: the EA Skate Modding Discord (the invite inside S3Native.exe).
+/// There's no public download page, so Flux opens this and installs the file the player gets there.
+pub const NATIVE_MENU_SOURCE: &str = "https://discord.gg/b46F5PQysY";
+
+/// Install the Native Menu from the archive (.zip / .7z / .rar) or folder the player downloaded:
+/// unpacked into Flux's data folder, its S3Native.exe remembered and switched on.
+pub fn install_native_menu(from: &Path, cx: &mut App) -> Result<String, String> {
+    let dest = crate::LAUNCHER_DIR.get().ok_or("Flux's data folder isn't set up")?.join("skate3-native-menu");
+    let stage = dest.with_extension("new");
+    _ = std::fs::remove_dir_all(&stage);
+    if from.is_dir() {
+        copy_dir(from, &stage)?;
+    } else {
+        extract_archive(from, &stage)?;
+    }
+    fn find(dir: &Path, depth: usize) -> Option<PathBuf> {
+        let entries: Vec<PathBuf> = std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).collect();
+        entries.iter().find(|p| p.is_file() && p.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case("S3Native.exe"))).cloned()
+            .or_else(|| (depth < 4).then(|| entries.iter().filter(|p| p.is_dir()).find_map(|d| find(d, depth + 1))).flatten())
+    }
+    let Some(found) = find(&stage, 0) else {
+        _ = std::fs::remove_dir_all(&stage);
+        return Err("That download has no S3Native.exe: pick the Native Menu's .zip / .7z (or its folder).".into());
+    };
+    // Keep the player's configs and challenges from an older copy.
+    let rel = found.strip_prefix(&stage).map_err(|_| "Unexpected archive layout")?.to_path_buf();
+    if let Some(old_exe) = native_menu_exe(cx).filter(|e| e.starts_with(&dest)) && let Some(old_dir) = old_exe.parent() {
+        let new_dir = found.parent().unwrap_or(&stage).to_path_buf();
+        for keep in ["configs", "custom_challenges"] {
+            if old_dir.join(keep).is_dir() {
+                _ = copy_dir(&old_dir.join(keep), &new_dir.join(keep));
+            }
+        }
+    }
+    _ = std::fs::remove_dir_all(&dest);
+    std::fs::rename(&stage, &dest).map_err(|e| format!("Couldn't install the Native Menu: {e}"))?;
+    let exe = dest.join(rel);
+    let config = crate::interface_config::InterfaceConfig::get_mut(cx);
+    config.skate3_native_menu = Some(exe);
+    config.skate3_native_menu_on = true;
+    Ok("Native Menu installed: it starts with Skate 3 (run it once by itself to let it install its 1.05 game update)".into())
+}
+
 /// Start the Native Menu beside RPCS3, from its own folder (it keeps configs and logs there). It
 /// attaches to RPCS3 itself once Skate 3 has loaded.
 pub fn start_native_menu(exe: &Path) -> Result<(), String> {

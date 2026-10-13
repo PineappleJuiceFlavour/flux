@@ -464,6 +464,13 @@ impl GamePage {
 
         // ---- Skate 3 on RPCS3: the Native Menu and skaters.
         let skate3 = !xbox && ids.serial.as_deref().is_some_and(crate::rpcs3_config::is_skate3);
+        // FLUX_NATIVE_MENU_INSTALL=<archive or folder>: install it when the tab opens (testing).
+        if skate3 && let Some(from) = std::env::var_os("FLUX_NATIVE_MENU_INSTALL")
+            && !MENU_TEST.swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            let result = game_mods::install_native_menu(std::path::Path::new(&from), cx);
+            self.mods_message = Some(match result { Ok(t) => (t.into(), false), Err(e) => (e.into(), true) });
+        }
         let skate3_cards = skate3.then(|| {
             let config = InterfaceConfig::get(cx);
             let menu = game_mods::native_menu_exe(cx);
@@ -481,9 +488,18 @@ impl GamePage {
                     .child(div().text_sm().child("Start the Native Menu when I play Skate 3")))
                 .child(div().text_xs().text_color(muted).child(match &menu {
                     Some(exe) => format!("Menu: {}", crate::privacy::path(exe)),
-                    None => "Flux didn't find S3Native.exe (it looks in Downloads and on the Desktop). Choose it to switch this on.".to_string(),
+                    None => "Not installed. Its author shares it in the EA Skate Modding Discord: Get the Native Menu opens it, then Install from download sets it up.".to_string(),
                 }))
                 .child(h_flex().gap_2().flex_wrap()
+                    .child(Button::new("skate3-menu-get").small().when(menu.is_none(), |b| b.primary()).label("Get the Native Menu")
+                        .on_click(|_, _, cx| cx.open_url(game_mods::NATIVE_MENU_SOURCE)))
+                    .child(Button::new("skate3-menu-install").small().label("Install from download")
+                        .on_click(cx.listener(|page, _, window, cx| {
+                            page.pick(false, "Choose the Native Menu you downloaded (.zip / .7z / .rar)", window, cx, |page, path, cx| {
+                                let result = game_mods::install_native_menu(&path, cx);
+                                page.note(result, cx);
+                            });
+                        })))
                     .child(Button::new("skate3-menu-choose").small().label(if menu.is_some() { "Change" } else { "Choose S3Native.exe" })
                         .on_click(cx.listener(|page, _, window, cx| {
                             page.pick(false, "Choose S3Native.exe (Skate 3 Native Menu)", window, cx, |page, path, cx| {
@@ -665,3 +681,5 @@ impl GamePage {
 
 #[allow(dead_code)]
 fn _assert_types(_: &FileMod) {}
+
+static MENU_TEST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

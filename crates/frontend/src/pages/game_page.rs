@@ -362,9 +362,10 @@ impl GamePage {
                 .when_some(game.steam_appid, |this, appid| this.child(div().text_xs().text_color(muted).child(format!("Steam app {appid}")))))
             .child(h_flex().gap_3().items_center()
                 .child(div().w(px(90.)).text_sm().text_color(muted).child("Location"))
-                .child(div().flex_1().px_3().py_2().rounded_md().bg(cx.theme().background).text_sm().child(crate::privacy::path(&game.path)))
-                .child(Button::new("relocate-file").label("Choose file").small().on_click(cx.listener(|this, _, window, cx| this.relocate(false, window, cx))))
-                .child(Button::new("relocate-folder").label("Choose folder").small().on_click(cx.listener(|this, _, window, cx| this.relocate(true, window, cx)))))
+                // A long path wraps inside its box (min_w_0) instead of pushing the buttons off the card.
+                .child(div().flex_1().min_w_0().px_3().py_2().rounded_md().bg(cx.theme().background).text_sm().child(crate::privacy::path(&game.path)))
+                .child(Button::new("relocate-file").flex_shrink_0().label("Choose file").small().on_click(cx.listener(|this, _, window, cx| this.relocate(false, window, cx))))
+                .child(Button::new("relocate-folder").flex_shrink_0().label("Choose folder").small().on_click(cx.listener(|this, _, window, cx| this.relocate(true, window, cx)))))
             .when_some(self.message.clone(), |this, (text, error)| this.child(div().text_sm().text_color(if error { danger } else { rgb(0x5ee38a).into() }).child(text)))
             .when_some(problem.clone(), |this, problem| this.child(div().text_sm().text_color(danger).child(problem)))
             .when(problem.is_none(), |this| this.child(div().text_sm().text_color(rgb(0x5ee38a)).child("Ready to play")));

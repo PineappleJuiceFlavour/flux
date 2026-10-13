@@ -1185,6 +1185,152 @@ pub fn import_save(game: &LibraryGame, folder: &Path, cx: &App) -> Result<String
     Ok(format!("Imported into {}", target.display()))
 }
 
+// ------------------------------------------------------------------------------ Skate 3 on RPCS3
+
+/// The Skate 3 Native Menu's program: the one the player chose, else S3Native.exe in a
+/// "Skate_3_Native_Menu" folder in Downloads or on the Desktop (where its zip unpacks).
+pub fn native_menu_exe(cx: &App) -> Option<PathBuf> {
+    if let Some(exe) = crate::interface_config::InterfaceConfig::get(cx).skate3_native_menu.clone() && exe.is_file() {
+        return Some(exe);
+    }
+    let home = std::env::var_os("USERPROFILE").map(PathBuf::from)?;
+    for place in ["Downloads", "Desktop"] {
+        let dir = home.join(place);
+        let direct = dir.join("Skate_3_Native_Menu").join("S3Native.exe");
+        if direct.is_file() {
+            return Some(direct);
+        }
+        // A folder named after the menu (another version's zip name), one level down.
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            let exe = entry.path().join("S3Native.exe");
+            if entry.path().is_dir() && name.contains("native") && name.contains("menu") && exe.is_file() {
+                return Some(exe);
+            }
+        }
+    }
+    None
+}
+
+/// Start the Native Menu beside RPCS3, from its own folder (it keeps configs and logs there). It
+/// attaches to RPCS3 itself once Skate 3 has loaded.
+pub fn start_native_menu(exe: &Path) -> Result<(), String> {
+    let dir = exe.parent().ok_or("The Native Menu has no folder")?;
+    std::process::Command::new(exe).current_dir(dir).spawn()
+        .map(|_| ()).map_err(|e| format!("Couldn't start the Native Menu: {e}"))
+}
+
+/// Skate 3's skater save folder name for a serial: "BLUS30464-ALIAS_SKATER".
+pub fn skater_folder_name(serial: &str) -> String {
+    format!("{serial}-ALIAS_SKATER")
+}
+
+/// The skater save RPCS3 uses now.
+pub fn current_skater(base: &Path, serial: &str) -> PathBuf {
+    base.join("dev_hdd0").join("home").join("00000001").join("savedata").join(skater_folder_name(serial))
+}
+
+fn skater_store(game: &LibraryGame) -> Option<PathBuf> {
+    Some(game.art_dir()?.join("skaters"))
+}
+
+/// Skaters kept in Flux for this game, newest first: (folder, name).
+pub fn saved_skaters(game: &LibraryGame) -> Vec<(PathBuf, String)> {
+    let mut out: Vec<(PathBuf, String, Option<std::time::SystemTime>)> = skater_store(game)
+        .and_then(|d| std::fs::read_dir(d).ok()).into_iter().flatten().flatten()
+        .filter(|e| e.path().join("SKATER.P").is_file())
+        .map(|e| (e.path(), e.file_name().to_string_lossy().to_string(), e.metadata().and_then(|m| m.modified()).ok()))
+        .collect();
+    out.sort_by(|a, b| b.2.cmp(&a.2));
+    out.into_iter().map(|(p, n, _)| (p, n)).collect()
+}
+
+/// The skater save inside a folder the player picked: the folder itself, or the
+/// "<serial>-ALIAS_SKATER" folder somewhere inside it (saves are often shared as
+/// "BLUS/PS3/SAVEDATA/BLUS30464-ALIAS_SKATER", with an EU copy beside it).
+pub fn find_skater(folder: &Path, serial: &str) -> Result<PathBuf, String> {
+    let wanted = skater_folder_name(serial).to_uppercase();
+    let name_of = |p: &Path| p.file_name().map(|n| n.to_string_lossy().to_uppercase()).unwrap_or_default();
+    if folder.join("SKATER.P").is_file() && (name_of(folder) == wanted || !name_of(folder).ends_with("-ALIAS_SKATER")) {
+        return Ok(folder.to_path_buf());
+    }
+    let mut other_region = None;
+    let mut stack = vec![(folder.to_path_buf(), 0)];
+    while let Some((dir, depth)) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = name_of(&path);
+            if name == wanted && path.join("SKATER.P").is_file() {
+                return Ok(path);
+            }
+            if name.ends_with("-ALIAS_SKATER") && path.join("SKATER.P").is_file() {
+                other_region = Some(name);
+            }
+            if depth < 6 {
+                stack.push((path, depth + 1));
+            }
+        }
+    }
+    Err(match other_region {
+        Some(name) => format!("That folder has a skater for another version of the game ({name}); your Skate 3 is {serial}, so it needs a {wanted} folder."),
+        None => format!("No Skate 3 skater save ({wanted}, with a SKATER.P inside) in that folder."),
+    })
+}
+
+/// Put a kept skater into RPCS3's save folder (the current saves are backed up first).
+pub fn use_skater(game: &LibraryGame, skater: &Path, cx: &App) -> Result<String, String> {
+    let base = rpcs3_dir(cx).ok_or("Install RPCS3 first")?;
+    let serial = ids(game, cx).serial.ok_or("Flux couldn't read this game's serial")?;
+    backup_saves(game, "before changing skater", cx)?;
+    let target = current_skater(&base, &serial);
+    if target.exists() {
+        std::fs::remove_dir_all(&target).map_err(|e| format!("Couldn't replace the current skater: {e}"))?;
+    }
+    copy_dir(skater, &target)?;
+    let name = skater.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    Ok(format!("Skater \"{name}\" is in place: start Skate 3 to use it (your previous saves were backed up first)"))
+}
+
+/// Keep the skater from a picked folder in Flux, then use it.
+pub fn import_skater(game: &LibraryGame, folder: &Path, cx: &App) -> Result<String, String> {
+    let serial = ids(game, cx).serial.ok_or("Flux couldn't read this game's serial")?;
+    let found = find_skater(folder, &serial)?;
+    let store = skater_store(game).ok_or("Flux's data folder isn't set up")?;
+    // Named after the folder the player picked ("PS3_Skate_3_Black_Box_100_Percent_Save").
+    let base_name: String = folder.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "Skater".into())
+        .chars().map(|c| if c.is_alphanumeric() || " -_().".contains(c) { c } else { '_' }).collect();
+    let mut dest = store.join(&base_name);
+    let mut n = 2;
+    while dest.exists() {
+        dest = store.join(format!("{base_name} ({n})"));
+        n += 1;
+    }
+    copy_dir(&found, &dest)?;
+    use_skater(game, &dest, cx)
+}
+
+/// Keep the skater RPCS3 has now, so it can be switched back to later.
+pub fn save_current_skater(game: &LibraryGame, cx: &App) -> Result<String, String> {
+    let base = rpcs3_dir(cx).ok_or("Install RPCS3 first")?;
+    let serial = ids(game, cx).serial.ok_or("Flux couldn't read this game's serial")?;
+    let current = current_skater(&base, &serial);
+    if !current.join("SKATER.P").is_file() {
+        return Err("There's no skater save yet: play Skate 3 and save once first".into());
+    }
+    let store = skater_store(game).ok_or("Flux's data folder isn't set up")?;
+    let name = format!("My skater {}", chrono::Local::now().format("%Y-%m-%d %H.%M"));
+    copy_dir(&current, &store.join(&name))?;
+    Ok(format!("Kept your current skater as \"{name}\""))
+}
+
+pub fn delete_saved_skater(skater: &Path) -> Result<String, String> {
+    std::fs::remove_dir_all(skater).map_err(|e| format!("Couldn't delete it: {e}"))?;
+    Ok("Skater removed from the list (RPCS3's current save wasn't touched)".into())
+}
+
 // ----------------------------------------------------------------------------------------- debug
 
 /// The emulator's log file for this game.
@@ -1390,5 +1536,35 @@ mod rpcs3_patch_list_tests {
             println!("PATCH {} | {} | {} | {:?}", p.name, p.title, p.serial, p.versions);
         }
         assert!(!patches.is_empty() && patches.iter().all(|p| p.title == "Skate 3" && p.serial == "BLUS30464"));
+    }
+}
+
+#[cfg(test)]
+mod skater_tests {
+    use super::find_skater;
+
+    #[test]
+    fn finds_the_right_region_and_says_why_not() {
+        let root = std::env::temp_dir().join("flux-skater-test");
+        _ = std::fs::remove_dir_all(&root);
+        for serial in ["BLUS30464", "BLES00760"] {
+            let dir = root.join(&serial[..4]).join("PS3").join("SAVEDATA").join(format!("{serial}-ALIAS_SKATER"));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("SKATER.P"), b"x").unwrap();
+        }
+        assert!(find_skater(&root, "BLUS30464").unwrap().ends_with("BLUS30464-ALIAS_SKATER"));
+        assert!(find_skater(&root, "BLES00760").unwrap().ends_with("BLES00760-ALIAS_SKATER"));
+        // Picking the save folder itself works too.
+        let us = root.join("BLUS").join("PS3").join("SAVEDATA").join("BLUS30464-ALIAS_SKATER");
+        assert_eq!(find_skater(&us, "BLUS30464").unwrap(), us);
+        // A Japanese copy finds only other regions' skaters: say so.
+        assert!(find_skater(&root, "BLJM60296").unwrap_err().contains("another version"));
+    }
+
+    /// FLUX_SKATER_DIR=<a downloaded skater save>: which folder Flux would import for the US game.
+    #[test]
+    fn real_skater_folder() {
+        let Some(dir) = std::env::var_os("FLUX_SKATER_DIR") else { return };
+        println!("FOUND {:?}", find_skater(std::path::Path::new(&dir), "BLUS30464"));
     }
 }

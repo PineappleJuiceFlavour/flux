@@ -674,6 +674,15 @@ pub fn start_game(game: &LibraryGame, cx: &mut App) -> Result<String, String> {
         return Err(problem.to_string());
     }
     let child = launch(game, cx)?;
+    // Skate 3 on RPCS3 with the Native Menu switched on: start it beside RPCS3 (it attaches itself
+    // once the game has loaded). A menu that won't start doesn't stop the game.
+    if game.kind == GameKind::Ps3 && InterfaceConfig::get(cx).skate3_native_menu_on
+        && crate::game_mods::ids(game, cx).serial.as_deref().is_some_and(crate::rpcs3_config::is_skate3)
+        && let Some(menu) = crate::game_mods::native_menu_exe(cx)
+        && let Err(e) = crate::game_mods::start_native_menu(&menu)
+    {
+        log::warn!("{e}");
+    }
     let id = game.id.clone();
     if let Some(g) = InterfaceConfig::get_mut(cx).games.iter_mut().find(|g| g.id == id) {
         g.last_played = Some(now_unix());

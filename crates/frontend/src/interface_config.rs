@@ -197,6 +197,12 @@ pub struct InterfaceConfig {
     /// SK8V: the "you have both games" popup was answered (Not now / Don't show again).
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub sk8v_prompt_dismissed: bool,
+    /// Skate 3 on RPCS3: start the community Native Menu (S3Native.exe) with the game.
+    #[serde(default, deserialize_with = "schema::try_deserialize")]
+    pub skate3_native_menu_on: bool,
+    /// Skate 3: the Native Menu's S3Native.exe, when the player chose it.
+    #[serde(default, skip_serializing_if = "schema::skip_if_none", deserialize_with = "schema::try_deserialize")]
+    pub skate3_native_menu: Option<std::path::PathBuf>,
     /// PlayStation controllers act as Xbox controllers (`crate::controller`).
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub controller_emulation: bool,
@@ -465,6 +471,8 @@ impl Default for InterfaceConfig {
             sk8v_gta_dir: None,
             sk8v_goofy: false,
             sk8v_prompt_dismissed: false,
+            skate3_native_menu_on: false,
+            skate3_native_menu: None,
             controller_emulation: false,
             controller_mapping: Default::default(),
             content_filter_version: Default::default(),

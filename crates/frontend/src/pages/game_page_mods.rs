@@ -6,6 +6,7 @@ use gpui::{prelude::*, *};
 use gpui_component::{ActiveTheme, Disableable, Sizable, button::{Button, ButtonVariants}, h_flex, scroll::ScrollableElement, switch::Switch, v_flex};
 
 use super::{GamePage, update_game};
+use crate::interface_config::InterfaceConfig;
 use crate::{
     game_mods::{self, FileMod},
     games::{GameKind, LibraryGame},
@@ -461,12 +462,101 @@ impl GamePage {
             .when(!backup_rows.is_empty(), |this| this.child(div().text_xs().text_color(muted).child("Backups")))
             .children(backup_rows);
 
+        // ---- Skate 3 on RPCS3: the Native Menu and skaters.
+        let skate3 = !xbox && ids.serial.as_deref().is_some_and(crate::rpcs3_config::is_skate3);
+        let skate3_cards = skate3.then(|| {
+            let config = InterfaceConfig::get(cx);
+            let menu = game_mods::native_menu_exe(cx);
+            let on = config.skate3_native_menu_on;
+            let menu_card = card("NATIVE MENU")
+                .child(div().text_sm().text_color(muted).child(
+                    "The community Skate 3 Native Menu (S3Native.exe): teleports, physics and skater mods, custom maps and challenges, \
+                     changed live while you play. Flux can start it with the game; it attaches to RPCS3 once Skate 3 has loaded.",
+                ))
+                .child(h_flex().gap_3().items_center()
+                    .child(Switch::new("skate3-native-menu").checked(on && menu.is_some()).disabled(menu.is_none()).on_click(|on: &bool, _, cx| {
+                        InterfaceConfig::get_mut(cx).skate3_native_menu_on = *on;
+                        cx.refresh_windows();
+                    }))
+                    .child(div().text_sm().child("Start the Native Menu when I play Skate 3")))
+                .child(div().text_xs().text_color(muted).child(match &menu {
+                    Some(exe) => format!("Menu: {}", crate::privacy::path(exe)),
+                    None => "Flux didn't find S3Native.exe (it looks in Downloads and on the Desktop). Choose it to switch this on.".to_string(),
+                }))
+                .child(h_flex().gap_2().flex_wrap()
+                    .child(Button::new("skate3-menu-choose").small().label(if menu.is_some() { "Change" } else { "Choose S3Native.exe" })
+                        .on_click(cx.listener(|page, _, window, cx| {
+                            page.pick(false, "Choose S3Native.exe (Skate 3 Native Menu)", window, cx, |page, path, cx| {
+                                let ok = path.file_name().is_some_and(|n| n.to_string_lossy().to_lowercase().ends_with(".exe"));
+                                if ok {
+                                    let config = InterfaceConfig::get_mut(cx);
+                                    config.skate3_native_menu = Some(path);
+                                    config.skate3_native_menu_on = true;
+                                }
+                                page.note(if ok { Ok("Native Menu set: it starts with Skate 3".into()) } else { Err("Choose the menu's S3Native.exe".into()) }, cx);
+                            });
+                        })))
+                    .when_some(menu.clone(), |this, exe| this.child(Button::new("skate3-menu-open").small().label("Open it now")
+                        .on_click(cx.listener(move |page, _, _, cx| {
+                            let result = game_mods::start_native_menu(&exe).map(|_| "Native Menu started".to_string());
+                            page.note(result, cx);
+                        })))))
+                .child(div().text_xs().text_color(muted).child(
+                    "It must run at the same level as RPCS3 (both normally, or both as administrator). Use its physics and speed mods \
+                     offline or with friends who agree: in online lobbies everyone needs the same settings or you'll desync.",
+                ));
+
+            let skaters = game_mods::saved_skaters(game);
+            let rows: Vec<AnyElement> = skaters.iter().enumerate().map(|(i, (path, name))| {
+                let (use_path, del_path, g_use) = (path.clone(), path.clone(), game.clone());
+                h_flex().gap_3().items_center().p_2().rounded_lg().bg(background)
+                    .child(div().flex_1().min_w_0().text_sm().overflow_hidden().whitespace_nowrap().text_ellipsis().child(name.clone()))
+                    .child(Button::new(("skater-use", i)).small().primary().label("Use").disabled(running)
+                        .on_click(cx.listener(move |page, _, _, cx| {
+                            let result = game_mods::use_skater(&g_use, &use_path, cx);
+                            page.note(result, cx);
+                        })))
+                    .child(Button::new(("skater-delete", i)).small().ghost().label("Remove")
+                        .on_click(cx.listener(move |page, _, _, cx| {
+                            let result = game_mods::delete_saved_skater(&del_path);
+                            page.note(result, cx);
+                        })))
+                    .into_any_element()
+            }).collect();
+            let (g_import, g_keep) = (game.clone(), game.clone());
+            let skaters_card = card("SKATERS")
+                .child(div().text_sm().text_color(muted).child(
+                    "Import a skater save (a folder with a SKATER.P inside, or any folder that has the BLUS30464-ALIAS_SKATER / \
+                     BLES00760-ALIAS_SKATER folder somewhere in it). Flux keeps each one here so you can switch between them, and \
+                     backs up your current saves first every time.",
+                ))
+                .child(h_flex().gap_2().flex_wrap()
+                    .child(Button::new("skater-import").small().primary().label("Import a skater").disabled(running)
+                        .on_click(cx.listener(move |page, _, window, cx| {
+                            let game = g_import.clone();
+                            page.pick(true, "Choose the skater save folder (or the folder it came in)", window, cx, move |page, path, cx| {
+                                let result = game_mods::import_skater(&game, &path, cx);
+                                page.note(result, cx);
+                            });
+                        })))
+                    .child(Button::new("skater-keep").small().label("Keep my current skater")
+                        .on_click(cx.listener(move |page, _, _, cx| {
+                            let result = game_mods::save_current_skater(&g_keep, cx);
+                            page.note(result, cx);
+                        }))))
+                .when(rows.is_empty(), |this| this.child(div().text_sm().text_color(muted).child("No skaters kept yet.")))
+                .children(rows)
+                .when(running, |this| this.child(div().text_xs().text_color(warn).child("Close Skate 3 before switching skaters.")));
+            [menu_card, skaters_card]
+        });
+
         let _ = window;
         v_flex()
             .size_full()
             .p_6()
             .gap_4()
             .max_w(px(1000.))
+            .children(skate3_cards.into_iter().flatten())
             .child(patches_card)
             .children(plugins_card)
             .child(files_card)

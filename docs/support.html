@@ -68,7 +68,7 @@
           <summary>Windows says "Windows protected your PC". Is that safe?</summary>
           <div class="answer">
             <p>Windows shows this for apps that aren't signed with a paid certificate yet. Click <strong>More info</strong>, then <strong>Run anyway</strong>.</p>
-            <p>Every release is built by GitHub from the public source code. To check a download yourself, run <code>gh attestation verify Flux.exe -R PineappleJuiceFlavour/flux</code> with the GitHub CLI.</p>
+            <p>To check a download yourself, compare its SHA-256 with the one on the <a href="https://github.com/PineappleJuiceFlavour/flux/releases" target="_blank" rel="noopener">release page</a> (in PowerShell: <code>Get-FileHash Flux.exe</code>). Flux's source code is public on GitHub.</p>
           </div>
         </details>
         <details>

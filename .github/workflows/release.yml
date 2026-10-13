@@ -16,12 +16,9 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
-    # Keeps the build cache warm for the next release (see Speed above); publishes nothing.
-    branches: [main]
-    paths: ["crates/**", "vendor/**", "Cargo.lock", "Cargo.toml", "rust-toolchain.toml", "scripts/ci_release.py", ".github/workflows/release.yml"]
-  # Manual run: builds and attests only, nothing is published.
+  # Releases are built and published from the developer's PC (Publishing/quick-release.py):
+  # faster than a cloud build, and the exe goes up before the source. This workflow is a manual
+  # test build only; a version tag must NOT start it, or it would replace the uploaded exe.
   workflow_dispatch:
 
 permissions:

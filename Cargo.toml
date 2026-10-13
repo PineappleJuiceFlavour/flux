@@ -12,6 +12,21 @@ version = "5.3.1"
 debug = "limited"
 lto = "thin"
 codegen-units = 1
+
+# Flux's own crates compile in parallel (16 parts) so a release only waits a few minutes on them;
+# libraries keep 1, so their builds (and GitHub's cache of them) stay the same.
+[profile.release.package.frontend]
+codegen-units = 16
+[profile.release.package.backend]
+codegen-units = 16
+[profile.release.package.pandora_launcher]
+codegen-units = 16
+[profile.release.package.schema]
+codegen-units = 16
+[profile.release.package.bridge]
+codegen-units = 16
+[profile.release.package.auth]
+codegen-units = 16
 # Enable for more accurate flamegraphs
 # debug = true
 

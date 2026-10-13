@@ -335,3 +335,12 @@ footer .spacer { flex: 1; }
 
 /* Scrolling to a section stops below the sticky top bar. */
 section[id] { scroll-margin-top: 72px; }
+
+/* Privacy and Terms: readable long-form text. */
+.legal { max-width: 76ch; padding-top: 8px; }
+.legal h2 { margin: 30px 0 10px; font-size: 20px; font-weight: 800; }
+.legal h2:first-child { margin-top: 0; }
+.legal p, .legal li { color: rgba(255, 255, 255, 0.86); }
+.legal p { margin: 0 0 12px; }
+.legal ul { margin: 0 0 12px; padding-left: 20px; }
+.legal li + li { margin-top: 6px; }

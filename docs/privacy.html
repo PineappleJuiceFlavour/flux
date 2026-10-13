@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Flux Privacy</title>
+<meta name="description" content="What Flux Launcher keeps, where it keeps it, and who it talks to. No accounts, no ads, no tracking.">
+<link rel="icon" href="assets/favicon.png">
+<link rel="stylesheet" href="style.css?v=5d959234">
+</head>
+<body>
+<div class="glow" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="assets/logo.png" alt="">Flux</a>
+    <nav class="tabs" aria-label="Site">
+      <a class="tab" href="/">Home</a>
+      <a class="tab" href="/#features">Features</a>
+      <a class="tab" href="/support">Support</a>
+      <a class="tab" href="/donate">Donate</a>
+      <a class="tab" href="https://github.com/PineappleJuiceFlavour/flux/tree/main" target="_blank" rel="noopener">Source</a>
+    </nav>
+    <span class="spacer"></span>
+    <a class="play small" href="https://github.com/PineappleJuiceFlavour/flux/releases/latest/download/Flux.exe">Download</a>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <section class="hero" aria-labelledby="title">
+      <h1 class="headline" id="title">Privacy <em>policy</em></h1>
+      <p class="lead">Flux has no Flux accounts, no ads and no tracking. What you do in Flux stays on your PC, except what you send to the services you choose to use through it.</p>
+      <p class="note">Last updated 13 October 2026. Applies to the Flux Launcher app and fluxlauncher.com.</p>
+    </section>
+
+    <section class="legal" aria-label="Privacy policy">
+      <h2>The short version</h2>
+      <ul>
+        <li>Flux doesn't collect analytics, usage statistics or crash reports, and doesn't send anything to its developer.</li>
+        <li>Your settings, library and Minecraft instances are stored on your PC.</li>
+        <li>Your sign-ins and keys are stored in Windows Credential Manager, on your PC only.</li>
+        <li>Flux talks to other services (like Microsoft, Modrinth or Steam) only to do something you asked for. Those services have their own privacy policies.</li>
+      </ul>
+
+      <h2>What Flux keeps on your PC</h2>
+      <ul>
+        <li><strong>Settings, library and instances</strong> in <code>%LOCALAPPDATA%\FluxLauncher</code>: your games list, the art Flux found for them, play time, Minecraft instances, mods and logs.</li>
+        <li><strong>Sign-ins</strong> (Microsoft / Minecraft, and chat sign-ins for PlayStation, Xbox or Flux chat if you use them) and keys you add (such as a SteamGridDB key), in Windows Credential Manager.</li>
+      </ul>
+      <p>To remove everything, close Flux, delete that folder, and remove the <code>FluxLauncher</code> entries in Credential Manager.</p>
+
+      <h2>Signing in with Microsoft</h2>
+      <p>When you add a Minecraft account, you sign in on Microsoft's own page. Flux never sees your password. Microsoft gives Flux sign-in tokens, which Flux uses only with Microsoft, Xbox Live and Mojang to start Minecraft and show your profile, skin and friends. The permissions Microsoft shows (your Xbox Live profile, and access while you're not using the app) are what Minecraft sign-in needs: they let Flux keep you signed in so you don't log in every time. You can remove Flux's access at any time at <a href="https://microsoft.com/consent" target="_blank" rel="noopener">microsoft.com/consent</a>.</p>
+
+      <h2>Services Flux connects to</h2>
+      <p>Flux only connects to a service when you use the feature that needs it:</p>
+      <ul>
+        <li><strong>Minecraft:</strong> Microsoft, Xbox Live and Mojang (sign-in, game files, skins), Fabric, Forge and NeoForge (mod loaders), and the servers you join or ping in Quick Play.</li>
+        <li><strong>Mods:</strong> Modrinth and CurseForge, when you browse or install mods.</li>
+        <li><strong>Updates and emulators:</strong> GitHub, to check for Flux updates and to download emulators from their official releases.</li>
+        <li><strong>Game info and art:</strong> the Steam store, Wikipedia, Wikidata, libretro thumbnails, PCGamingWiki, and SteamGridDB if you add your own key. Flux sends the game's name to look it up.</li>
+        <li><strong>PlayStation 3:</strong> PlayStation's update servers, when you get the PS3 system software or a game update, and rpcs3.net or GitHub for community patches.</li>
+        <li><strong>Chat (optional):</strong> PlayStation Network, Xbox Live or Matrix, only if you sign in to them in Flux.</li>
+        <li><strong>Sharing a log:</strong> mclo.gs, only when you choose to upload a log to share it.</li>
+      </ul>
+      <p>These services see what any app using them sees, such as your IP address and the request. Their own privacy policies apply.</p>
+
+      <h2>This website</h2>
+      <p>fluxlauncher.com is hosted on GitHub Pages. It sets no cookies and has no analytics or ads. Your browser loads it from GitHub, which may log visits the way any web host does (see <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement" target="_blank" rel="noopener">GitHub's privacy statement</a>). The page also asks GitHub's API for the newest Flux version. The Home demo shows public Steam store information.</p>
+
+      <h2>Donations</h2>
+      <p>Tips through Buy Me a Coffee are handled by Buy Me a Coffee and its payment providers; Flux's developer sees what they share, such as your name and message. Crypto sent to the Solana address is recorded publicly on the Solana blockchain, like every Solana transaction.</p>
+
+      <h2>Children</h2>
+      <p>Flux doesn't knowingly collect information from anyone, including children. Minecraft and Xbox sign-in follow Microsoft's own rules for child accounts.</p>
+
+      <h2>Changes</h2>
+      <p>If this policy changes, the new version will be posted here with a new date. Flux's source code is public on <a href="https://github.com/PineappleJuiceFlavour/flux/tree/main" target="_blank" rel="noopener">GitHub</a>, so anyone can check what it does.</p>
+
+      <h2>Contact</h2>
+      <p>Questions about privacy: <a href="https://github.com/PineappleJuiceFlavour/flux/issues/new" target="_blank" rel="noopener">open an issue on GitHub</a>.</p>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Flux Launcher</span>
+    <a href="/">Home</a>
+    <a href="/support">Support</a>
+    <a href="/privacy">Privacy</a>
+    <a href="/terms">Terms</a>
+    <a href="https://github.com/PineappleJuiceFlavour/flux/tree/main" target="_blank" rel="noopener">Source</a>
+    <span class="spacer"></span>
+    <span>Free and open source under the MIT license. Not affiliated with Mojang, Microsoft, Sony or Valve.</span>
+  </div>
+</footer>
+</body>
+</html>

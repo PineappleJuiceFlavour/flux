@@ -7,12 +7,20 @@
 # %USERPROFILE%\.flux-signing\flux-update-key.json (Settings > Secrets and variables > Actions).
 # Optional: repo variable FLUX_MSA_CLIENT_ID = Flux's Microsoft app id, once Mojang approves it;
 # repo secret FLUX_CURSEFORGE_KEY = Flux's own CurseForge API key.
+#
+# Speed: compiling everything from scratch takes about 18 minutes. The Rust build cache keeps the
+# compiled libraries, but GitHub only lets a tag's run read caches saved from the default branch,
+# so pushes to main that change the code build too (nothing is published) and save the cache;
+# release tags then only recompile Flux's own crates.
 
 name: Release
 
 on:
   push:
     tags: ["v*"]
+    # Keeps the build cache warm for the next release (see Speed above); publishes nothing.
+    branches: [main]
+    paths: ["crates/**", "vendor/**", "Cargo.lock", "Cargo.toml", "rust-toolchain.toml", "scripts/ci_release.py", ".github/workflows/release.yml"]
   # Manual run: builds and attests only, nothing is published.
   workflow_dispatch:
 
@@ -20,6 +28,11 @@ permissions:
   contents: write
   id-token: write
   attestations: write
+
+# A newer push to main replaces an older cache build; release tags always run to the end.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
   release:
@@ -32,6 +45,12 @@ jobs:
         run: |
           rustup toolchain install 1.99.0 --profile minimal
           rustup default 1.99.0
+
+      # Compiled dependencies from the last main build: only Flux's own crates rebuild.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: actions/setup-python@v5
         with:
@@ -49,6 +68,7 @@ jobs:
           python scripts/ci_release.py
 
       - name: Build provenance
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: dist/Flux.exe
@@ -70,7 +90,7 @@ jobs:
           fi
 
       - uses: actions/upload-artifact@v4
-        if: github.ref_type != 'tag'
+        if: github.event_name == 'workflow_dispatch'
         with:
           name: flux-test-build
           path: dist/

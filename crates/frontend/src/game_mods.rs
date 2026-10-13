@@ -400,7 +400,9 @@ fn games_from(lines: &[&str]) -> Vec<(String, String, Vec<String>)> {
     out
 }
 
-/// Every patch in an RPCS3 patch file that's for `serial` (or for all games).
+/// Every patch in an RPCS3 patch file made for `serial`. Patches listed for "All" games are left
+/// out: they're SPU fixes named after the games they're for (Prince of Persia, WWE...), so for any
+/// other game they'd only fill the list with other games' patches.
 pub fn parse_rpcs3_patches(text: &str, serial: &str) -> Vec<Rpcs3Patch> {
     let lines: Vec<&str> = text.lines().collect();
     // Anchors: "  name: &name" followed by its deeper-indented lines.
@@ -479,7 +481,7 @@ pub fn parse_rpcs3_patches(text: &str, serial: &str) -> Vec<Rpcs3Patch> {
             }
         }
         for (title, game_serial, versions) in games {
-            if game_serial == serial || game_serial == "All" {
+            if game_serial == serial {
                 out.push(Rpcs3Patch { hash: hash.clone(), name: name.clone(), title, serial: game_serial, versions, author: author.clone(), notes: notes.clone() });
             }
         }
@@ -1313,7 +1315,8 @@ PPU-c00f2b02e71f7e9b04683958bda712d66af4be15:
     fn rpcs3_patch_list_for_one_serial() {
         let des = parse_rpcs3_patches(RPCS3, "BLUS30443");
         let names: Vec<&str> = des.iter().map(|p| p.name.as_str()).collect();
-        assert_eq!(names, ["Unlock FPS", "Aspect ratio (HUD/Menus) 32:9", "Everything"]);
+        // "All" games patches are other games' SPU fixes: only this game's own are listed.
+        assert_eq!(names, ["Unlock FPS", "Aspect ratio (HUD/Menus) 32:9"]);
         assert_eq!(des[0].title, "Demon's Souls");
         assert_eq!(des[0].versions, ["01.00"]);
         assert_eq!(des[0].notes, "Clocks scale must be default.");
@@ -1321,11 +1324,12 @@ PPU-c00f2b02e71f7e9b04683958bda712d66af4be15:
         assert_eq!(des[1].notes, "Needs \"Aspect Ratio\" on.");
         assert_eq!(des[0].hash, "PPU-83681f6110d33442329073b72b8dc88a2f677172");
         let skate = parse_rpcs3_patches(RPCS3, "BLUS30059");
-        assert_eq!(skate.len(), 2);
+        assert_eq!(skate.len(), 1);
         assert_eq!(skate[0].author, "tuukkas");
         assert_eq!(rpcs3_version_key(&skate[0], Some("01.01")).as_deref(), Some("01.01"));
         assert_eq!(rpcs3_version_key(&skate[0], Some("01.02")), None);
-        assert_eq!(rpcs3_version_key(&skate[1], Some("01.02")).as_deref(), Some("All"));
+        let any_version = Rpcs3Patch { versions: vec!["All".into()], ..skate[0].clone() };
+        assert_eq!(rpcs3_version_key(&any_version, Some("01.02")).as_deref(), Some("All"));
     }
 
     #[test]
@@ -1371,5 +1375,20 @@ mod ps3_iso_tests {
         let serial = crate::disc::sfo_value(&sfo, "TITLE_ID").unwrap();
         println!("{serial} {:?} {:?}", crate::disc::sfo_value(&sfo, "APP_VER"), crate::disc::sfo_value(&sfo, "TITLE"));
         assert_eq!(serial.len(), 9);
+    }
+}
+
+#[cfg(test)]
+mod rpcs3_patch_list_tests {
+    /// FLUX_PATCH_YML=<RPCS3 patch.yml>: what the Mods tab lists for Skate 3 (US).
+    #[test]
+    fn skate3_patches() {
+        let Some(path) = std::env::var_os("FLUX_PATCH_YML") else { return };
+        let text = std::fs::read_to_string(path).unwrap();
+        let patches = super::parse_rpcs3_patches(&text, "BLUS30464");
+        for p in &patches {
+            println!("PATCH {} | {} | {} | {:?}", p.name, p.title, p.serial, p.versions);
+        }
+        assert!(!patches.is_empty() && patches.iter().all(|p| p.title == "Skate 3" && p.serial == "BLUS30464"));
     }
 }

@@ -88,6 +88,10 @@ jobs:
           else
             gh release create "$TAG" dist/Flux.exe dist/update_manifest_windows.json --title "Flux ${TAG#v}" --notes "$NOTES"
           fi
+          # gh uploads into a draft and then publishes it; 1.2.7 was once left a draft (invisible to
+          # downloads and the updater) without any error, so publish it explicitly and check.
+          gh release edit "$TAG" --draft=false --latest
+          test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = "false"
 
       - uses: actions/upload-artifact@v4
         if: github.event_name == 'workflow_dispatch'

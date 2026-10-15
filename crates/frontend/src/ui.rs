@@ -406,14 +406,16 @@ impl LauncherUI {
             Ok("emulators") => PageType::Emulators,
             Ok("sk8v") => PageType::Sk8v,
             Ok(page) if page.starts_with("game:") => PageType::Game { id: page["game:".len()..].to_string().into() },
+            Ok(other) => crate::demo_tour::page(other).map(|(p, _)| p).unwrap_or(PageType::GamesHome),
             _ => PageType::GamesHome,
         };
+        let start_layout = std::env::var("FLUX_START_PAGE").ok().and_then(|p| crate::demo_tour::page(&p)).and_then(|(_, l)| l);
         let original_page_path: Arc<[PageType]> = [].into();
         {
             let config = InterfaceConfig::get_mut(cx);
             config.main_page = main_page.clone();
             config.page_path = [].into();
-            config.games_layout = GamesLayout::Shelf;
+            config.games_layout = start_layout.unwrap_or(GamesLayout::Shelf);
         }
 
         let mut pending_page = None;
@@ -451,6 +453,14 @@ impl LauncherUI {
             // FLUX_CHAT_OPEN=1: open the chat panel at startup (testing).
             let mut open_chat_once = std::env::var_os("FLUX_CHAT_OPEN").is_some();
             let mut sk8v_offer_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+            // FLUX_DEMO=<script>: Flux drives itself, for showcase recordings (`crate::demo_tour`).
+            let mut tour = crate::demo_tour::Tour::from_env();
+            if tour.is_some() {
+                sk8v_offer_at = None;
+                // Recordings never show friends: privacy mode on, whatever the settings say.
+                crate::privacy::set(true);
+                _ = cx.update(|_, cx| InterfaceConfig::get_mut(cx).privacy_mode = true);
+            }
             loop {
                 cx.background_executor().timer(std::time::Duration::from_millis(16)).await;
                 let Some(ui) = ui.upgrade() else { break };
@@ -462,6 +472,24 @@ impl LauncherUI {
                     if sk8v_offer_at.is_some_and(|at| std::time::Instant::now() >= at) && window.is_window_active() {
                         sk8v_offer_at = None;
                         crate::pages::sk8v_page::offer(window, cx);
+                    }
+                    if let Some(action) = tour.as_mut().and_then(|t| t.tick()) {
+                        use crate::demo_tour::Action;
+                        match action {
+                            Action::Press(nav) => Self::controller_tick(&ui, crate::controller_nav::Polled { presses: vec![nav], scroll: 0. }, window, cx),
+                            Action::Scroll(amount) => Self::controller_tick(&ui, crate::controller_nav::Polled { presses: vec![], scroll: amount }, window, cx),
+                            Action::Page(page, layout) => {
+                                crate::demo_tour::set_layout(layout, cx);
+                                ui.update(cx, |ui, cx| ui.switch_page(page, &[], window, cx));
+                                cx.refresh_windows();
+                            },
+                            Action::Chat(network, view) => {
+                                crate::privacy::set(true);
+                                InterfaceConfig::get_mut(cx).chat_network = network;
+                                ui.update(cx, |ui, cx| ui.open_chat(view, window, cx));
+                                cx.refresh_windows();
+                            },
+                        }
                     }
                     if window.is_window_active() {
                         let polled = poller.poll();

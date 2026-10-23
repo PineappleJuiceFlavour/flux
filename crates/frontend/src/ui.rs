@@ -453,6 +453,9 @@ impl LauncherUI {
             // FLUX_CHAT_OPEN=1: open the chat panel at startup (testing).
             let mut open_chat_once = std::env::var_os("FLUX_CHAT_OPEN").is_some();
             let mut sk8v_offer_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(4));
+            // FLUX_IMPORT_SHARE_CODE=<code> / FLUX_SHARE_CODE_FOR=<instance>: try share codes at startup (testing).
+            let mut share_test_at = (std::env::var_os("FLUX_IMPORT_SHARE_CODE").is_some() || std::env::var_os("FLUX_SHARE_CODE_FOR").is_some())
+                .then(|| std::time::Instant::now() + std::time::Duration::from_secs(3));
             // FLUX_DEMO=<script>: Flux drives itself, for showcase recordings (`crate::demo_tour`).
             let mut tour = crate::demo_tour::Tour::from_env();
             if tour.is_some() {
@@ -468,6 +471,21 @@ impl LauncherUI {
                     if open_chat_once {
                         open_chat_once = false;
                         ui.update(cx, |ui, cx| ui.open_chat(crate::chat::panel::ChatView::Chats, window, cx));
+                    }
+                    if share_test_at.is_some_and(|at| std::time::Instant::now() >= at) {
+                        share_test_at = None;
+                        sk8v_offer_at = None;
+                        let data = ui.read(cx).data.clone();
+                        if let Ok(code) = std::env::var("FLUX_IMPORT_SHARE_CODE") {
+                            crate::modals::share_code::import_code(&code, &data.backend_handle, window, cx);
+                        }
+                        if let Ok(name) = std::env::var("FLUX_SHARE_CODE_FOR") {
+                            let found = data.instances.read(cx).entries.values().map(|e| e.read(cx))
+                                .find(|e| e.name.as_ref() == name).map(|e| (e.id, e.name.clone()));
+                            if let Some((id, name)) = found {
+                                crate::modals::share_code::open_share_code(id, name, data.backend_handle.clone(), window, cx);
+                            }
+                        }
                     }
                     if sk8v_offer_at.is_some_and(|at| std::time::Instant::now() >= at) && window.is_window_active() {
                         sk8v_offer_at = None;

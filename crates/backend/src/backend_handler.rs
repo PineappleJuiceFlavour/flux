@@ -517,57 +517,41 @@ impl BackendState {
                 });
             },
             MessageToBackend::CreateInstanceFromFile { file, modal_action } => {
-                let summary = self.mod_metadata_manager.get_path(&file);
-
-                // right now only .mrpack importing is used
-                let ContentType::ModrinthModpack { dependencies, .. } = &summary.extra else {
-                    modal_action.set_finished_with_error("Not a .mrpack file".into());
-                    return;
-                };
-
-                let Some(name) = summary.name.clone() else {
-                    modal_action.set_finished_with_error("Unable to determine name from modpack".into());
-                    return;
-                };
-
-                let mut minecraft_version = None;
-                let mut loader = Loader::Vanilla;
-                for (key, value) in dependencies {
-                    match &**key {
-                        "forge" => loader = Loader::Forge,
-                        "neoforge" => loader = Loader::NeoForge,
-                        "fabric-loader" => loader = Loader::Fabric,
-                        "minecraft" => minecraft_version = Some(value.clone()),
-                        _ => {}
-                    }
-                }
-
-                let Some(minecraft_version) = minecraft_version else {
-                    modal_action.set_finished_with_error("Unable to determine minecraft version from modpack".into());
-                    return;
-                };
-
-                let content_install = ContentInstall {
-                    target: InstallTarget::NewInstance { name: Some(name), preset: None },
-                    loader,
-                    minecraft_version: minecraft_version.into(),
-                    files: Arc::from([
-                        ContentInstallFile {
-                            replace_old: None,
-                            path: ContentInstallPath::Automatic,
-                            download: ContentDownload::File { path: file },
-                            content_source: ContentSource::Manual,
-                            reason: ContentInstallReason::Standalone,
-                        }
-                    ]),
-                };
-
+                self.create_instance_from_mrpack(file, modal_action);
+            },
+            MessageToBackend::CreateShareCode { id, modal_action, result } => {
                 let this = self.clone();
-
                 tokio::spawn(async move {
-                    this.install_content(content_install, modal_action.clone()).await;
+                    let shared = crate::share_code::create(&this, id, &modal_action).await
+                        .map(|s| bridge::message::ShareCodeResult {
+                            code: s.code.into(),
+                            included: s.included,
+                            skipped: s.skipped.into_iter().map(Arc::from).collect(),
+                        })
+                        .map_err(Arc::<str>::from);
+                    if let Err(error) = &shared {
+                        modal_action.set_finished_with_error(error.clone());
+                    }
+                    _ = result.send(shared);
                     modal_action.set_finished();
-                    this.send.send(MessageToFrontend::Refresh);
+                });
+            },
+            MessageToBackend::CreateInstanceFromShareCode { code, modal_action } => {
+                let this = self.clone();
+                tokio::spawn(async move {
+                    match crate::share_code::to_mrpack(&this, &code, &modal_action).await {
+                        Ok((file, missing)) => {
+                            if !missing.is_empty() {
+                                this.send.send_warning(format!("{} file{} from the share code couldn't be downloaded for you: {}",
+                                    missing.len(), if missing.len() == 1 { "" } else { "s" }, missing.join(", ")));
+                            }
+                            this.create_instance_from_mrpack(file, modal_action);
+                        },
+                        Err(error) => {
+                            modal_action.set_finished_with_error(error.into());
+                            modal_action.set_finished();
+                        },
+                    }
                 });
             },
             MessageToBackend::DeleteContent { id, content_ids: mod_ids } => {
@@ -2448,4 +2432,62 @@ async fn send_log_line(line: &[u8], send: &tokio::sync::mpsc::Sender<Arc<str>>, 
         },
     }
     Ok(())
+}
+
+impl BackendState {
+    /// Make a new instance from a .mrpack file (the Import page, and share codes).
+    fn create_instance_from_mrpack(self: &Arc<Self>, file: std::path::PathBuf, modal_action: ModalAction) {
+        let summary = self.mod_metadata_manager.get_path(&file);
+
+        // right now only .mrpack importing is used
+        let ContentType::ModrinthModpack { dependencies, .. } = &summary.extra else {
+            modal_action.set_finished_with_error("Not a .mrpack file".into());
+            return;
+        };
+
+        let Some(name) = summary.name.clone() else {
+            modal_action.set_finished_with_error("Unable to determine name from modpack".into());
+            return;
+        };
+
+        let mut minecraft_version = None;
+        let mut loader = Loader::Vanilla;
+        for (key, value) in dependencies {
+            match &**key {
+                "forge" => loader = Loader::Forge,
+                "neoforge" => loader = Loader::NeoForge,
+                "fabric-loader" => loader = Loader::Fabric,
+                "minecraft" => minecraft_version = Some(value.clone()),
+                _ => {}
+            }
+        }
+
+        let Some(minecraft_version) = minecraft_version else {
+            modal_action.set_finished_with_error("Unable to determine minecraft version from modpack".into());
+            return;
+        };
+
+        let content_install = ContentInstall {
+            target: InstallTarget::NewInstance { name: Some(name), preset: None },
+            loader,
+            minecraft_version: minecraft_version.into(),
+            files: Arc::from([
+                ContentInstallFile {
+                    replace_old: None,
+                    path: ContentInstallPath::Automatic,
+                    download: ContentDownload::File { path: file },
+                    content_source: ContentSource::Manual,
+                    reason: ContentInstallReason::Standalone,
+                }
+            ]),
+        };
+
+        let this = self.clone();
+
+        tokio::spawn(async move {
+            this.install_content(content_install, modal_action.clone()).await;
+            modal_action.set_finished();
+            this.send.send(MessageToFrontend::Refresh);
+        });
+        }
 }

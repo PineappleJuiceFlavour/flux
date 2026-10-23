@@ -6,7 +6,8 @@ use std::collections::HashSet;
 use bridge::{instance::{ContentFolder, ContentType, InstanceID, InstanceStatus}, message::MessageToBackend};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Icon, IndexPath, Sizable, button::{Button, ButtonVariants}, h_flex, menu::{ContextMenuExt, DropdownMenu, PopupMenuItem},
+    ActiveTheme, Icon, IndexPath, Sizable, button::{Button, ButtonVariants}, h_flex, input::{Input, InputEvent, InputState},
+    menu::{ContextMenuExt, DropdownMenu, PopupMenuItem},
     select::{SelectDelegate, SelectItem}, v_flex,
 };
 use schema::loader::Loader;
@@ -24,19 +25,36 @@ pub struct InstancesPage {
     filter: Option<Loader>,
     /// Instances whose mod list we've asked for (for the "42 mods" counts).
     watched: HashSet<InstanceID>,
+    /// The box in the tab bar for a friend's share code.
+    code_input: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl InstancesPage {
-    pub fn new(data: &DataEntities, _window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let instances = data.instances.clone();
+        let code_input = cx.new(|cx| InputState::new(window, cx).placeholder("Paste a friend's share code"));
         let _subscriptions = vec![
+            // Enter imports the code.
+            cx.subscribe_in(&code_input, window, |page, _, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    page.import_code(window, cx);
+                }
+            }),
             cx.subscribe(&instances, |_, _, _: &InstanceAddedEvent, cx| cx.notify()),
             cx.subscribe(&instances, |_, _, _: &InstanceRemovedEvent, cx| cx.notify()),
             cx.subscribe(&instances, |_, _, _: &InstanceModifiedEvent, cx| cx.notify()),
             cx.subscribe(&instances, |_, _, _: &InstanceMovedToTopEvent, cx| cx.notify()),
         ];
-        Self { data: data.clone(), filter: None, watched: HashSet::new(), _subscriptions }
+        Self { data: data.clone(), filter: None, watched: HashSet::new(), code_input, _subscriptions }
+    }
+
+    fn import_code(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let code = self.code_input.read(cx).value().to_string();
+        crate::modals::share_code::import_code(&code, &self.data.backend_handle, window, cx);
+        if code.trim().starts_with("FLUX1-") {
+            self.code_input.update(cx, |input, cx| input.set_value("", window, cx));
+        }
     }
 
     fn entries(&self, cx: &App) -> Vec<InstanceEntry> {
@@ -201,8 +219,15 @@ impl InstancesPage {
                 let (id, name) = (menu_entry.id, menu_entry.name.clone());
                 let (instances, backend) = (data.instances.clone(), data.backend_handle.clone());
                 menu.item(PopupMenuItem::new("Open").on_click(move |_, window, cx| open_instance(open.clone(), window, cx)))
-                    .item(PopupMenuItem::new("Move to group").on_click(move |_, window, cx| {
-                        crate::modals::move_instance_to_group::open_move_instance_to_group_modal(id, name.clone(), instances.clone(), backend.clone(), window, cx);
+                    .item(PopupMenuItem::new("Move to group").on_click({
+                        let (name, backend) = (name.clone(), backend.clone());
+                        move |_, window, cx| {
+                            crate::modals::move_instance_to_group::open_move_instance_to_group_modal(id, name.clone(), instances.clone(), backend.clone(), window, cx);
+                        }
+                    }))
+                    .item(PopupMenuItem::separator())
+                    .item(PopupMenuItem::new("Share code").on_click(move |_, window, cx| {
+                        crate::modals::share_code::open_share_code(id, name.clone(), backend.clone(), window, cx);
                     }))
             })
             .into_any_element()
@@ -253,8 +278,11 @@ fn play_or_stop(id: InstanceID, name: SharedString, status: InstanceStatus, data
 }
 
 impl Page for InstancesPage {
-    fn controls(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+    fn controls(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex().gap_2().items_center()
+            .child(div().w(px(280.)).child(Input::new(&self.code_input).small().prefix(Icon::new(PandoraIcon::Download).size_3p5())))
+            .child(Button::new("import-share-code").small().primary().label("Import code")
+                .on_click(cx.listener(|page, _, window, cx| page.import_code(window, cx))))
     }
 
     fn scrollable(&self, _cx: &App) -> bool {

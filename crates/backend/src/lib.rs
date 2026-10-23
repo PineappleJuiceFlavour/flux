@@ -34,6 +34,7 @@ mod id_slab;
 mod persistent;
 mod quickplay_presets;
 mod server_list_pinger;
+mod share_code;
 mod shortcut;
 mod skin_manager;
 mod syncing;

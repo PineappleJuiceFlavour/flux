@@ -38,7 +38,7 @@ use crate::{
 };
 
 #[derive(Debug)]
-enum ExportError {
+pub(crate) enum ExportError {
     Cancelled,
     Other(String),
 }
@@ -64,21 +64,21 @@ fn check_cancel(modal_action: &ModalAction) -> Result<(), ExportError> {
 }
 
 #[derive(Clone)]
-struct ExportFile {
-    abs: PathBuf,
-    rel: SafePath,
-    enabled: bool,
+pub(crate) struct ExportFile {
+    pub(crate) abs: PathBuf,
+    pub(crate) rel: SafePath,
+    pub(crate) enabled: bool,
 }
 
-struct ExportInstanceData {
-    root_path: Arc<Path>,
-    dot_minecraft_path: Arc<Path>,
-    configuration: InstanceConfiguration,
-    sync_targets: SyncTargets,
+pub(crate) struct ExportInstanceData {
+    pub(crate) root_path: Arc<Path>,
+    pub(crate) dot_minecraft_path: Arc<Path>,
+    pub(crate) configuration: InstanceConfiguration,
+    pub(crate) sync_targets: SyncTargets,
 }
 
 impl ExportInstanceData {
-    async fn determine_loader_version(&self, backend: &BackendState) -> Option<Ustr> {
+    pub(crate) async fn determine_loader_version(&self, backend: &BackendState) -> Option<Ustr> {
         match self.configuration.loader {
             Loader::Fabric => backend.meta.fetch(FabricLoaderManifestMetadataItem).await.ok()
                 .and_then(|manifest| self.configuration.determine_fabric_loader_version(&manifest)),
@@ -267,7 +267,7 @@ async fn export_curseforge_pack(
     Ok(())
 }
 
-fn collect_files(
+pub(crate) fn collect_files(
     root: &Path,
     dot_minecraft_path: &Path,
     options: &ExportOptions,
@@ -897,7 +897,7 @@ fn compute_murmur2(path: &Path) -> Result<u32, String> {
     Ok(murmur2_32(&data))
 }
 
-fn murmur2_32(data: &[u8]) -> u32 {
+pub(crate) fn murmur2_32(data: &[u8]) -> u32 {
     const M: u32 = 0x5bd1_e995;
     const R: u32 = 24;
 
@@ -943,7 +943,7 @@ fn murmur2_32(data: &[u8]) -> u32 {
     h
 }
 
-fn is_mod_file(path: &SafePath) -> bool {
+pub(crate) fn is_mod_file(path: &SafePath) -> bool {
     if !path.starts_with("mods") {
         return false;
     }
@@ -960,7 +960,7 @@ fn is_mod_file(path: &SafePath) -> bool {
         || filename.ends_with(".litemod.disabled")
 }
 
-fn is_resourcepack_file(path: &SafePath) -> bool {
+pub(crate) fn is_resourcepack_file(path: &SafePath) -> bool {
     if !path.starts_with("resourcepacks") {
         return false;
     }
@@ -972,7 +972,7 @@ fn is_resourcepack_file(path: &SafePath) -> bool {
     filename.ends_with(".zip") || filename.ends_with(".zip.disabled")
 }
 
-fn is_shaderpack_file(path: &SafePath) -> bool {
+pub(crate) fn is_shaderpack_file(path: &SafePath) -> bool {
     if !path.starts_with("shaderpacks") {
         return false;
     }

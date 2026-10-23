@@ -55,6 +55,15 @@ pub struct ExportOptions {
     pub curseforge: ExportCurseforgeOptions,
 }
 
+#[derive(Debug, Clone)]
+pub struct ShareCodeResult {
+    pub code: Arc<str>,
+    /// How many files the code covers.
+    pub included: usize,
+    /// Files that couldn't go in (not on Modrinth or CurseForge).
+    pub skipped: Vec<Arc<str>>,
+}
+
 pub enum MessageToBackend {
     RequestMetadata {
         request: MetadataRequest,
@@ -236,6 +245,17 @@ pub enum MessageToBackend {
     },
     CreateInstanceFromFile {
         file: PathBuf,
+        modal_action: ModalAction,
+    },
+    /// Make a share code for an instance (its mods, resource packs and shaders).
+    CreateShareCode {
+        id: InstanceID,
+        modal_action: ModalAction,
+        result: tokio::sync::oneshot::Sender<Result<ShareCodeResult, Arc<str>>>,
+    },
+    /// Rebuild a friend's instance from their share code.
+    CreateInstanceFromShareCode {
+        code: Arc<str>,
         modal_action: ModalAction,
     },
     DownloadAllMetadata,

@@ -823,8 +823,9 @@ impl Render for OverlayView {
 
         // Middle: the viewer, or your newest screenshots and clips.
         // The picture gets whatever height is left between the top, its controls and the bottom bar.
-        let reserved = if self.viewer.as_ref().is_some_and(|v| v.item.video) { 520. } else { 420. };
+        let reserved = if self.viewer.as_ref().is_some_and(|v| v.item.video) { 480. } else { 400. };
         let media_h = px((f32::from(window.viewport_size().height) - reserved).max(120.));
+        let viewing = self.viewer.is_some();
         let middle: AnyElement = if let Some(v) = &self.viewer {
             let name = v.item.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
             let picture: AnyElement = match (&v.item.video, &v.image) {
@@ -832,8 +833,8 @@ impl Render for OverlayView {
                 (true, Some(frame)) => img(ImageSource::Render(frame.clone())).w_full().h(media_h).object_fit(ObjectFit::Contain).into_any_element(),
                 (true, None) => div().h(px(240.)).flex().items_center().justify_center().text_color(muted).child("Loading…").into_any_element(),
             };
-            let button = |act: Act, icon: PandoraIcon, label: &str| ring(h_flex().id(SharedString::from(format!("view-{act:?}"))).gap_2().px_3().py_2().rounded_lg()
-                .cursor_pointer().bg(rgb(0x151a28)).hover(|s| s.bg(rgb(0x222a40))).text_sm().font_weight(FontWeight::SEMIBOLD)
+            let button = |act: Act, icon: PandoraIcon, label: &str| ring(h_flex().id(SharedString::from(format!("view-{act:?}"))).flex_shrink_0().gap_1p5().px_2p5().h(px(32.)).items_center().rounded_lg()
+                .cursor_pointer().bg(rgb(0x151a28)).hover(|s| s.bg(rgb(0x222a40))).text_xs().font_weight(FontWeight::SEMIBOLD)
                 .child(Icon::new(icon).size_4().text_color(rgb(0x7aceff))).child(label.to_string()), sel == Some(act)).on_click(click(act));
             let mut viewer = panel().flex_1().min_w_0()
                 .child(h_flex().justify_between().items_center()
@@ -853,7 +854,7 @@ impl Render for OverlayView {
                         .child(div().absolute().top_0().bottom_0().left(relative((s / d) as f32)).w(relative(((e - s) / d) as f32))
                             .rounded_full().bg(rgba(0x5682ff99)))
                         .child(div().absolute().top(px(-3.)).h(px(14.)).w(px(3.)).rounded_full().bg(white()).left(relative((time / d).clamp(0.0, 1.0) as f32))))
-                    .child(h_flex().flex_wrap().gap_2().items_center()
+                    .child(h_flex().gap_2().items_center()
                         .child(button(Act::PlayPause, if playing { PandoraIcon::Pause } else { PandoraIcon::Play }, if playing { "Pause" } else { "Play" }))
                         .child(button(Act::Back5, PandoraIcon::ChevronLeft, "5 s"))
                         .child(button(Act::Fwd5, PandoraIcon::ChevronRight, "5 s"))
@@ -861,7 +862,7 @@ impl Render for OverlayView {
                         .child(div().flex_1())
                         .child(button(Act::ViewCopy, PandoraIcon::Copy, "Copy"))
                         .child(button(Act::ViewFolder, PandoraIcon::FolderOpen, "Show in folder")))
-                    .child(h_flex().flex_wrap().gap_2().items_center().text_sm()
+                    .child(h_flex().gap_2().items_center().text_sm()
                         .child(heading("Trim"))
                         .child(button(Act::SetStart, PandoraIcon::ChevronLeft, "Set start here"))
                         .child(button(Act::SetEnd, PandoraIcon::ChevronRight, "Set end here"))
@@ -941,9 +942,9 @@ impl Render for OverlayView {
             .child(v_flex().size_full().p(px(if narrow { 20. } else { 32. })).gap_4()
                 .child(top)
                 .child(h_flex().flex_1().min_h_0().overflow_hidden().w_full().items_start().gap_4()
-                    .child(overview)
+                    .when(!viewing, |this| this.child(overview))
                     .child(middle)
-                    .child(friends))
+                    .when(!viewing, |this| this.child(friends)))
                 .child(bottom))
     }
 }

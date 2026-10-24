@@ -11,6 +11,8 @@ use std::sync::{Mutex, OnceLock, mpsc};
 pub enum TrayEvent {
     /// Left-click: open the popup next to the cursor (physical pixels).
     Popup { x: i32, y: i32 },
+    /// Right-click: the menu (Open Flux, Chat, Settings, Quit).
+    Menu { x: i32, y: i32 },
     OpenFlux,
     Chat,
     Quit,
@@ -55,9 +57,6 @@ mod imp {
     const WM_TRAY: u32 = WM_APP + 1;
     const WM_SET_HOTKEY: u32 = WM_APP + 2;
     const WM_REMOVE: u32 = WM_APP + 3;
-    const CMD_OPEN: usize = 1;
-    const CMD_CHAT: usize = 2;
-    const CMD_QUIT: usize = 3;
 
     static SENDER: OnceLock<Mutex<mpsc::Sender<TrayEvent>>> = OnceLock::new();
     static TASKBAR_CREATED: OnceLock<u32> = OnceLock::new();
@@ -103,29 +102,6 @@ mod imp {
         }
     }
 
-    fn show_menu(hwnd: HWND) {
-        unsafe {
-            let Ok(menu) = CreatePopupMenu() else { return };
-            _ = AppendMenuW(menu, MF_STRING, CMD_OPEN, w!("Open Flux"));
-            _ = AppendMenuW(menu, MF_STRING, CMD_CHAT, w!("Chat"));
-            _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-            _ = AppendMenuW(menu, MF_STRING, CMD_QUIT, w!("Quit Flux"));
-            let mut pt = POINT::default();
-            _ = GetCursorPos(&mut pt);
-            // Needed so the menu closes when you click elsewhere.
-            _ = SetForegroundWindow(hwnd);
-            let cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, pt.x, pt.y, None, hwnd, None);
-            _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
-            _ = DestroyMenu(menu);
-            match cmd.0 as usize {
-                CMD_OPEN => send(TrayEvent::OpenFlux),
-                CMD_CHAT => send(TrayEvent::Chat),
-                CMD_QUIT => send(TrayEvent::Quit),
-                _ => {},
-            }
-        }
-    }
-
     unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         unsafe {
             if Some(&msg) == TASKBAR_CREATED.get() {
@@ -141,7 +117,11 @@ mod imp {
                             _ = GetCursorPos(&mut pt);
                             send(TrayEvent::Popup { x: pt.x, y: pt.y });
                         },
-                        WM_RBUTTONUP | WM_CONTEXTMENU => show_menu(hwnd),
+                        WM_RBUTTONUP | WM_CONTEXTMENU => {
+                            let mut pt = POINT::default();
+                            _ = GetCursorPos(&mut pt);
+                            send(TrayEvent::Menu { x: pt.x, y: pt.y });
+                        },
                         _ => {},
                     }
                     LRESULT(0)

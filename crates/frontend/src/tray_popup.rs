@@ -4,7 +4,9 @@
 use std::sync::Mutex;
 
 use gpui::{prelude::*, *};
-use gpui_component::{Root, h_flex, v_flex};
+use gpui_component::{Icon, h_flex, v_flex};
+
+use crate::icon::PandoraIcon;
 
 use crate::{chat, entity::DataEntities, interface_config::InterfaceConfig, overlay::{Pending, open_flux}};
 
@@ -92,7 +94,7 @@ pub fn open(x: i32, y: i32, cx: &mut App) {
     }, move |window, cx| {
         let view = cx.new(|cx| TrayPopup::new(data, items, window, cx));
         window.activate_window();
-        cx.new(|cx| Root::new(view, window, cx))
+        view
     });
     if let Ok(handle) = handle {
         *POPUP.lock().unwrap() = Some(handle.into());
@@ -207,5 +209,82 @@ impl Render for TrayPopup {
                     dismiss(window);
                     crate::quit_flux(cx);
                 })))
+    }
+}
+
+/// Right-click on the tray icon: a small Flux-styled menu.
+pub fn open_menu(x: i32, y: i32, cx: &mut App) {
+    close(cx);
+    let s = scale_at(x, y);
+    let cursor = point(px(x as f32 / s), px(y as f32 / s));
+    let displays = cx.displays();
+    let Some(display) = displays.iter().find(|d| d.bounds().contains(&cursor)).or(displays.first()).cloned() else { return };
+    let (w, h) = (210., 196.);
+    let b = display.bounds();
+    let work = display.visible_bounds();
+    let left = (cursor.x - px(w - 16.)).max(b.origin.x + px(8.)).min(b.origin.x + b.size.width - px(w + 8.));
+    let bottom = (cursor.y - px(8.)).min(work.origin.y + work.size.height - px(8.));
+    let bounds = Bounds { origin: point(left, bottom - px(h)), size: size(px(w), px(h)) };
+    let handle = cx.open_window(WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        display_id: Some(display.id()),
+        titlebar: None,
+        focus: true,
+        show: true,
+        kind: WindowKind::PopUp,
+        is_movable: false,
+        is_resizable: false,
+        is_minimizable: false,
+        window_background: WindowBackgroundAppearance::Transparent,
+        window_decorations: Some(WindowDecorations::Client),
+        app_id: Some("FluxLauncher".into()),
+        ..Default::default()
+    }, |window, cx| {
+        window.activate_window();
+        cx.new(|cx| TrayMenu { _activation: cx.observe_window_activation(window, |_, window, _| {
+            if !window.is_window_active() {
+                POPUP.lock().unwrap().take();
+                window.remove_window();
+            }
+        }) })
+    });
+    if let Ok(handle) = handle {
+        *POPUP.lock().unwrap() = Some(handle.into());
+    }
+}
+
+struct TrayMenu {
+    _activation: Subscription,
+}
+
+impl Render for TrayMenu {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let item = |id: &'static str, icon: PandoraIcon, label: &'static str, danger: bool| h_flex().id(id).gap_3().px_3().h(px(36.)).items_center()
+            .rounded_md().cursor_pointer().hover(|s| s.bg(rgb(0x1a2032)))
+            .text_sm().font_weight(FontWeight::MEDIUM).text_color(if danger { rgb(0xff7a7a) } else { rgb(0xeef1f8) })
+            .child(Icon::new(icon).size_4().text_color(if danger { rgb(0xff7a7a) } else { rgb(0x7aceff) }))
+            .child(label);
+        v_flex().size_full().p_1p5().gap_0p5().rounded_xl().bg(rgb(0x0d1018)).border_1().border_color(rgb(0x232838))
+            .child(h_flex().gap_2().px_3().h(px(30.)).items_center()
+                .child(div().size(px(18.)).rounded_sm().bg(rgb(0x5682ff)).flex().items_center().justify_center()
+                    .text_xs().font_weight(FontWeight::BLACK).text_color(white()).child("F"))
+                .child(div().text_xs().font_weight(FontWeight::BOLD).text_color(rgb(0x8d95aa)).child("FLUX")))
+            .child(item("menu-open", PandoraIcon::House, "Open Flux", false).on_click(|_, window, _| {
+                dismiss(window);
+                open_flux(None);
+            }))
+            .child(item("menu-chat", PandoraIcon::MessageCircle, "Chat", false).on_click(|_, window, _| {
+                dismiss(window);
+                open_flux(Some(Pending::Chat));
+            }))
+            .child(item("menu-settings", PandoraIcon::Settings, "Settings", false).on_click(|_, window, _| {
+                dismiss(window);
+                open_flux(Some(Pending::Settings));
+            }))
+            .child(div().h(px(1.)).mx_2().my_0p5().bg(rgb(0x232838)))
+            .child(item("menu-quit", PandoraIcon::CircleX, "Quit Flux", true).on_click(|_, window, cx| {
+                dismiss(window);
+                crate::quit_flux(cx);
+            }))
     }
 }

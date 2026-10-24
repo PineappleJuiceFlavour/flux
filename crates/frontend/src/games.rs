@@ -711,7 +711,9 @@ pub fn start_game(game: &LibraryGame, cx: &mut App) -> Result<String, String> {
     }
     if game.via_launcher() {
         // The launcher owns the game process; Flux just asked it to start (or install) the game.
+        // Remember its exe so the in-game overlay knows Flux started it.
         drop(child);
+        crate::overlay::note_launched(&game.path);
         let launcher = game.library_name();
         return Ok(if game.installed() {
             format!("Starting {} through {launcher}", game.name)

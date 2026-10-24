@@ -54,6 +54,9 @@ fn update_game(id: &str, cx: &mut App, f: impl FnOnce(&mut LibraryGame)) {
     }
 }
 
+/// The tab the next game page opens on ("graphics", ...), set by the overlay.
+pub static NEXT_TAB: std::sync::Mutex<Option<&'static str>> = std::sync::Mutex::new(None);
+
 impl GamePage {
     /// Controller: LB / RB switch tabs, Y stars the game. False: not used here.
     pub fn controller(&mut self, nav: crate::controller_nav::Nav, cx: &mut Context<Self>) -> bool {
@@ -98,11 +101,13 @@ impl GamePage {
     pub fn new(id: &str, data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Option<Self> {
         let game = games::find(id, cx)?;
         // FLUX_GAME_TAB=setup|graphics opens on that tab (for screenshots and testing).
-        let tab = match std::env::var("FLUX_GAME_TAB").as_deref() {
-            Ok("setup") => GameTab::Setup,
-            Ok("graphics") if game.kind.has_emulator_settings() => GameTab::Graphics,
-            Ok("mods") if game.kind.has_mods() => GameTab::Mods,
-            Ok("debug") if game.kind.has_mods() => GameTab::Debug,
+        // A tab asked for from outside (the overlay's Emulator settings), else FLUX_GAME_TAB.
+        let wanted = NEXT_TAB.lock().unwrap().take().map(str::to_string).or_else(|| std::env::var("FLUX_GAME_TAB").ok());
+        let tab = match wanted.as_deref() {
+            Some("setup") => GameTab::Setup,
+            Some("graphics") if game.kind.has_emulator_settings() => GameTab::Graphics,
+            Some("mods") if game.kind.has_mods() => GameTab::Mods,
+            Some("debug") if game.kind.has_mods() => GameTab::Debug,
             _ => GameTab::Play,
         };
         let name_input = cx.new(|cx| InputState::new(window, cx).default_value(game.name.clone()));

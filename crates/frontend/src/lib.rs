@@ -53,6 +53,7 @@ pub mod skin_renderer;
 pub mod skin_thumbnail_cache;
 pub mod ui;
 pub mod overlay;
+pub mod media;
 pub mod tray;
 pub mod tray_popup;
 
@@ -71,6 +72,11 @@ fn run_tray_test(test: &str, cx: &mut App) {
         let mut it = at.split(',').filter_map(|v| v.trim().parse::<i32>().ok());
         if let (Some(x), Some(y)) = (it.next(), it.next()) {
             tray_popup::open(x, y, cx);
+        }
+    } else if let Some(rect) = test.strip_prefix("overlay-rect:") {
+        let v: Vec<i32> = rect.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+        if v.len() == 4 {
+            overlay::open_test(v[0], v[1], v[2], v[3], cx);
         }
     } else if test == "overlay-front" {
         #[cfg(windows)]
@@ -264,7 +270,9 @@ pub fn start(
                         tray::TrayEvent::Chat => overlay::open_flux(Some(overlay::Pending::Chat)),
                         tray::TrayEvent::Quit => quit_flux(cx),
                         tray::TrayEvent::Hotkey { id: tray::HOTKEY_SCREENSHOT, foreground } => overlay::quick_screenshot(foreground, cx),
+                        tray::TrayEvent::Hotkey { id, .. } if (overlay::KEY_ESC..=overlay::KEY_ENTER).contains(&id) => overlay::key(id, cx),
                         tray::TrayEvent::Hotkey { foreground, .. } => overlay::toggle(foreground, cx),
+                        tray::TrayEvent::Menu { x, y } => tray_popup::open_menu(x, y, cx),
                     }
                 }
             });

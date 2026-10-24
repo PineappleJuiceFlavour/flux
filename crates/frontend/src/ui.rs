@@ -477,6 +477,11 @@ impl LauncherUI {
                     match pending {
                         Some(crate::overlay::Pending::Chat) => ui.update(cx, |ui, cx| ui.open_chat(crate::chat::panel::ChatView::Chats, window, cx)),
                         Some(crate::overlay::Pending::Page(page)) => ui.update(cx, |ui, cx| ui.switch_page(page, &[], window, cx)),
+                        Some(crate::overlay::Pending::GameTab(id, tab)) => {
+                            *crate::pages::game_page::NEXT_TAB.lock().unwrap() = Some(tab);
+                            ui.update(cx, |ui, cx| ui.switch_page(PageType::Game { id: id.into() }, &[], window, cx));
+                        },
+                        Some(crate::overlay::Pending::Settings) => window.dispatch_action(Box::new(crate::OpenSettings), cx),
                         None => {},
                     }
                     if share_test_at.is_some_and(|at| std::time::Instant::now() >= at) {

@@ -472,6 +472,13 @@ impl LauncherUI {
                         open_chat_once = false;
                         ui.update(cx, |ui, cx| ui.open_chat(crate::chat::panel::ChatView::Chats, window, cx));
                     }
+                    // The tray or the overlay asked for something in this window.
+                    let pending = crate::overlay::PENDING.lock().unwrap().take();
+                    match pending {
+                        Some(crate::overlay::Pending::Chat) => ui.update(cx, |ui, cx| ui.open_chat(crate::chat::panel::ChatView::Chats, window, cx)),
+                        Some(crate::overlay::Pending::Page(page)) => ui.update(cx, |ui, cx| ui.switch_page(page, &[], window, cx)),
+                        None => {},
+                    }
                     if share_test_at.is_some_and(|at| std::time::Instant::now() >= at) {
                         share_test_at = None;
                         sk8v_offer_at = None;

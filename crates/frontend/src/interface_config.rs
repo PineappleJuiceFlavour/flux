@@ -93,6 +93,21 @@ pub struct InterfaceConfig {
     pub live_game_output_display: LiveGameOutputDisplay,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub quit_on_main_closed: bool,
+    /// Closing the main window keeps Flux in the tray (Quit Flux from the tray closes it).
+    #[serde(default = "default_true", deserialize_with = "schema::try_deserialize")]
+    pub close_to_tray: bool,
+    /// The in-game overlay and its hotkey (RegisterHotKey modifiers + virtual-key code).
+    #[serde(default = "default_true", deserialize_with = "schema::try_deserialize")]
+    pub overlay_enabled: bool,
+    #[serde(default = "default_overlay_mods", deserialize_with = "schema::try_deserialize")]
+    pub overlay_hotkey_mods: u32,
+    #[serde(default = "default_overlay_vk", deserialize_with = "schema::try_deserialize")]
+    pub overlay_hotkey_vk: u32,
+    /// Take a screenshot of the game in front, without opening the overlay.
+    #[serde(default = "default_overlay_mods", deserialize_with = "schema::try_deserialize")]
+    pub screenshot_hotkey_mods: u32,
+    #[serde(default = "default_screenshot_vk", deserialize_with = "schema::try_deserialize")]
+    pub screenshot_hotkey_vk: u32,
     #[serde(default, deserialize_with = "schema::try_deserialize")]
     pub use_os_titlebar: bool,
 
@@ -278,6 +293,17 @@ pub const DEFAULT_FONT: &'static str = "Inter 24pt";
 pub const DEFAULT_FONT_SIZE: i32 = 16;
 
 impl InterfaceConfig {
+    /// The global shortcuts to register (only while the overlay feature is on).
+    pub fn hotkeys(&self) -> Vec<(i32, (u32, u32))> {
+        if !self.overlay_enabled {
+            return Vec::new();
+        }
+        vec![
+            (crate::tray::HOTKEY_OVERLAY, (self.overlay_hotkey_mods, self.overlay_hotkey_vk)),
+            (crate::tray::HOTKEY_SCREENSHOT, (self.screenshot_hotkey_mods, self.screenshot_hotkey_vk)),
+        ]
+    }
+
     pub fn set_active_theme(&mut self, theme: SharedString) {
         if theme == DEFAULT_THEME {
             self.active_theme = None;
@@ -481,6 +507,12 @@ impl Default for InterfaceConfig {
             hide_main_window_on_launch: false,
             live_game_output_display: LiveGameOutputDisplay::default(),
             quit_on_main_closed: false,
+            close_to_tray: true,
+            overlay_enabled: true,
+            overlay_hotkey_mods: default_overlay_mods(),
+            overlay_hotkey_vk: default_overlay_vk(),
+            screenshot_hotkey_mods: default_overlay_mods(),
+            screenshot_hotkey_vk: default_screenshot_vk(),
             use_os_titlebar: false,
             hide_server_addresses: false,
             hide_usernames: false,
@@ -617,4 +649,22 @@ pub(crate) fn write_safe(path: &Path, content: &[u8]) -> std::io::Result<()> {
     }
 
     Ok(())
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Shift+F1 opens the overlay unless you pick something else.
+fn default_overlay_mods() -> u32 {
+    crate::tray::MOD_SHIFT
+}
+
+fn default_overlay_vk() -> u32 {
+    0x70
+}
+
+/// Shift+F12 takes a screenshot.
+fn default_screenshot_vk() -> u32 {
+    0x7B
 }

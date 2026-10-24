@@ -52,6 +52,57 @@ pub mod settings;
 pub mod skin_renderer;
 pub mod skin_thumbnail_cache;
 pub mod ui;
+pub mod overlay;
+pub mod tray;
+pub mod tray_popup;
+
+/// A way for the UI to message itself (the tray asks for the main window this way).
+pub static FRONTEND: std::sync::OnceLock<bridge::handle::FrontendHandle> = std::sync::OnceLock::new();
+static QUIT: std::sync::OnceLock<QuitCoordinator> = std::sync::OnceLock::new();
+/// Set while Flux is really quitting (not just closing to the tray).
+static QUITTING: AtomicBool = AtomicBool::new(false);
+
+/// The app's data, for windows opened outside the main window (tray popup, overlay).
+pub struct AppData(pub DataEntities);
+impl Global for AppData {}
+
+fn run_tray_test(test: &str, cx: &mut App) {
+    if let Some(at) = test.strip_prefix("popup:") {
+        let mut it = at.split(',').filter_map(|v| v.trim().parse::<i32>().ok());
+        if let (Some(x), Some(y)) = (it.next(), it.next()) {
+            tray_popup::open(x, y, cx);
+        }
+    } else if test == "overlay-front" {
+        #[cfg(windows)]
+        overlay::toggle(unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() }.0 as isize, cx);
+    } else if let Some(hwnd) = test.strip_prefix("overlay-hwnd:").and_then(|h| h.trim().parse::<isize>().ok()) {
+        log::info!("tray test: overlay over window {hwnd}");
+        overlay::toggle(hwnd, cx);
+    } else if let Some(title) = test.strip_prefix("overlay:") {
+        #[cfg(windows)]
+        {
+            let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+            let hwnd = unsafe { windows::Win32::UI::WindowsAndMessaging::FindWindowW(None, windows::core::PCWSTR(wide.as_ptr())) };
+            if let Ok(hwnd) = hwnd {
+                overlay::toggle(hwnd.0 as isize, cx);
+            }
+        }
+    } else if test == "quit" {
+        quit_flux(cx);
+    }
+}
+
+/// Quit Flux for real (tray › Quit Flux, Ctrl+Q): close every window and take the tray icon away.
+pub fn quit_flux(cx: &mut App) {
+    QUITTING.store(true, std::sync::atomic::Ordering::SeqCst);
+    tray::remove();
+    for window in cx.windows() {
+        _ = window.update(cx, |_, window, _| window.remove_window());
+    }
+    if let Some(quit) = QUIT.get() {
+        quit.set_can_quit(true);
+    }
+}
 
 #[derive(rust_embed::RustEmbed)]
 #[folder = "../../assets"]
@@ -89,12 +140,15 @@ pub fn start(
     panic_message: Arc<RwLock<Option<String>>>,
     deadlock_message: Arc<RwLock<Option<String>>>,
     backend_handle: BackendHandle,
+    frontend_handle: bridge::handle::FrontendHandle,
     mut recv: FrontendReceiver,
     quit_coordinator: QuitCoordinator,
 ) {
     let http_client = Arc::new(reqwest_client::ReqwestClient::user_agent(&*schema::USER_AGENT).unwrap());
 
     _ = LAUNCHER_DIR.set(launcher_dir.clone());
+    _ = FRONTEND.set(frontend_handle);
+    _ = QUIT.set(quit_coordinator.clone());
 
     gpui_platform::application().with_http_client(http_client).with_assets(Assets).run(move |cx: &mut App| {
         let _ = cx.text_system().add_fonts(vec![
@@ -147,6 +201,10 @@ pub fn start(
                 let windows = cx.windows();
 
                 let config = InterfaceConfig::get(cx);
+                // Closing the window just hides Flux to the tray; Quit Flux closes it for real.
+                if config.close_to_tray && !config.quit_on_main_closed && !QUITTING.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
                 if config.quit_on_main_closed {
                     for window in &windows {
                         let is_main = window.read(cx, |window: Entity<Root>, cx| {
@@ -177,13 +235,40 @@ pub fn start(
             KeyBinding::new("enter", Confirm, None),
         ]);
 
-        cx.on_action(|_: &Quit, cx| {
-            for window in cx.windows() {
-                _ = window.update(cx, |_, window, _| {
-                    window.remove_window();
-                });
+        cx.on_action(|_: &Quit, cx| quit_flux(cx));
+
+        // The tray icon and the overlay hotkey, and what they ask for.
+        {
+            let config = InterfaceConfig::get(cx);
+            tray::start(true, config.hotkeys());
+        }
+        // FLUX_TRAY_TEST=popup:<x>,<y> | overlay:<window title> | quit, 4 s after start (testing).
+        let mut tray_test = std::env::var("FLUX_TRAY_TEST").ok();
+        let tray_test_delay = std::env::var("FLUX_TRAY_TEST_DELAY").ok().and_then(|d| d.parse().ok()).unwrap_or(4);
+        let tray_test_at = std::time::Instant::now() + std::time::Duration::from_secs(tray_test_delay);
+        cx.spawn(async move |cx| loop {
+            cx.background_executor().timer(std::time::Duration::from_millis(40)).await;
+            if tray_test.is_some() && std::time::Instant::now() >= tray_test_at {
+                let test = tray_test.take().unwrap_or_default();
+                _ = cx.update(|cx| run_tray_test(&test, cx));
             }
-        });
+            let events = tray::poll();
+            if events.is_empty() {
+                continue;
+            }
+            _ = cx.update(|cx| {
+                for event in events {
+                    match event {
+                        tray::TrayEvent::Popup { x, y } => tray_popup::open(x, y, cx),
+                        tray::TrayEvent::OpenFlux => overlay::open_flux(None),
+                        tray::TrayEvent::Chat => overlay::open_flux(Some(overlay::Pending::Chat)),
+                        tray::TrayEvent::Quit => quit_flux(cx),
+                        tray::TrayEvent::Hotkey { id: tray::HOTKEY_SCREENSHOT, foreground } => overlay::quick_screenshot(foreground, cx),
+                        tray::TrayEvent::Hotkey { foreground, .. } => overlay::toggle(foreground, cx),
+                    }
+                }
+            });
+        }).detach();
 
         let instances = cx.new(|_| InstanceEntries {
             entries: IndexMap::new(),
@@ -208,6 +293,7 @@ pub fn start(
                 deadlock_message,
             })
         };
+        cx.set_global(AppData(data.clone()));
 
         let mut processor = Processor::new(data.clone(), main_window_hidden, quit_coordinator);
 

@@ -111,6 +111,36 @@ pub(super) fn create_page(data: &DataEntities, window: &mut Window, cx: &mut App
                         ..Default::default()
                     },
                     SettingItem {
+                        title: || "Keep Flux in the tray when closed",
+                        description: || "Closing the window hides Flux by the clock, so chat and downloads keep going. Quit Flux from the tray icon closes it",
+                        widget: SettingItemWidget::Switch(|cfg| cfg.close_to_tray, |cfg, val| cfg.close_to_tray = val),
+                        ..Default::default()
+                    },
+                    SettingItem {
+                        title: || "In-game overlay",
+                        description: || "Press the shortcut in a game for friends, screenshots, PC stats and (in emulators) pause",
+                        widget: SettingItemWidget::Any(Rc::new(|_, cx| {
+                            let on = InterfaceConfig::get(cx).overlay_enabled;
+                            gpui_component::switch::Switch::new("overlay-enabled").checked(on).on_click(|on, _, cx| {
+                                InterfaceConfig::get_mut(cx).overlay_enabled = *on;
+                                register_hotkeys(cx);
+                            }).into_any_element()
+                        })),
+                        ..Default::default()
+                    },
+                    SettingItem {
+                        title: || "Overlay shortcut",
+                        description: || "Click, then press the keys you want (Esc cancels)",
+                        widget: SettingItemWidget::Any(Rc::new(|_, cx| hotkey_recorder(crate::tray::HOTKEY_OVERLAY, cx).into_any_element())),
+                        ..Default::default()
+                    },
+                    SettingItem {
+                        title: || "Screenshot shortcut",
+                        description: || "Saves the game in front to Pictures › Flux, without opening the overlay",
+                        widget: SettingItemWidget::Any(Rc::new(|_, cx| hotkey_recorder(crate::tray::HOTKEY_SCREENSHOT, cx).into_any_element())),
+                        ..Default::default()
+                    },
+                    SettingItem {
                         title: t::settings::appearance::window::quit_when_main_window_closed,
                         description: t::settings::appearance::window::quit_when_main_window_closed_desc,
                         widget: SettingItemWidget::Switch(|cfg| cfg.quit_on_main_closed, |cfg, val| cfg.quit_on_main_closed = val),
@@ -229,3 +259,103 @@ fn accent_swatches(cx: &mut Context<super::SettingsRoot>) -> AnyElement {
         .into_any_element()
 }
 
+
+
+/// Register the global shortcuts as the settings say (off while the overlay is switched off).
+fn register_hotkeys(cx: &App) {
+    let config = InterfaceConfig::get(cx);
+    for id in [crate::tray::HOTKEY_OVERLAY, crate::tray::HOTKEY_SCREENSHOT] {
+        let key = config.hotkeys().into_iter().find(|(i, _)| *i == id).map(|(_, k)| k);
+        crate::tray::set_hotkey(id, key);
+    }
+}
+
+fn get_hotkey(id: i32, cx: &App) -> (u32, u32) {
+    let c = InterfaceConfig::get(cx);
+    if id == crate::tray::HOTKEY_SCREENSHOT { (c.screenshot_hotkey_mods, c.screenshot_hotkey_vk) } else { (c.overlay_hotkey_mods, c.overlay_hotkey_vk) }
+}
+
+fn set_hotkey(id: i32, mods: u32, vk: u32, cx: &mut App) {
+    let c = InterfaceConfig::get_mut(cx);
+    if id == crate::tray::HOTKEY_SCREENSHOT {
+        (c.screenshot_hotkey_mods, c.screenshot_hotkey_vk) = (mods, vk);
+    } else {
+        (c.overlay_hotkey_mods, c.overlay_hotkey_vk) = (mods, vk);
+    }
+}
+
+thread_local! {
+    static RECORDERS: std::cell::RefCell<Vec<Entity<HotkeyRecorder>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn hotkey_recorder(id: i32, cx: &mut App) -> Entity<HotkeyRecorder> {
+    if let Some(e) = RECORDERS.with(|r| r.borrow().iter().find(|e| e.read(cx).id == id).cloned()) {
+        return e;
+    }
+    let e = cx.new(|cx| HotkeyRecorder { id, focus: cx.focus_handle(), recording: false });
+    RECORDERS.with(|r| r.borrow_mut().push(e.clone()));
+    e
+}
+
+/// Records a new shortcut: click it, press the keys.
+struct HotkeyRecorder {
+    id: i32,
+    focus: FocusHandle,
+    recording: bool,
+}
+
+impl HotkeyRecorder {
+    fn stop(&mut self, cx: &mut Context<Self>) {
+        self.recording = false;
+        register_hotkeys(cx);
+        cx.notify();
+    }
+}
+
+impl Render for HotkeyRecorder {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let (mods, vk) = get_hotkey(self.id, cx);
+        let label = if self.recording { "Press keys…".to_string() } else { crate::tray::hotkey_label(mods, vk) };
+        let id = self.id;
+        h_flex().gap_2()
+            .child(div().id(("hotkey", id as usize)).track_focus(&self.focus).min_w(px(120.)).px_3().py_1().rounded_md().cursor_pointer()
+                .border_1().border_color(if self.recording { cx.theme().primary } else { cx.theme().border })
+                .text_sm().font_weight(FontWeight::SEMIBOLD).text_center().child(label)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.recording = true;
+                    // While picking, the old shortcut mustn't fire.
+                    crate::tray::set_hotkey(id, None);
+                    window.focus(&this.focus, cx);
+                    cx.notify();
+                }))
+                .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                    if !this.recording {
+                        return;
+                    }
+                    cx.stop_propagation();
+                    let key = event.keystroke.key.as_str();
+                    if key == "escape" {
+                        this.stop(cx);
+                        return;
+                    }
+                    let Some(vk) = crate::tray::vk_for_key(key) else { return };
+                    let m = &event.keystroke.modifiers;
+                    let mut mods = 0;
+                    if m.control { mods |= crate::tray::MOD_CONTROL; }
+                    if m.alt { mods |= crate::tray::MOD_ALT; }
+                    if m.shift { mods |= crate::tray::MOD_SHIFT; }
+                    if m.platform { mods |= crate::tray::MOD_WIN; }
+                    // A plain letter would stop working everywhere else: F-keys may go alone, others need a modifier.
+                    if mods == 0 && !(0x70..=0x87).contains(&vk) {
+                        return;
+                    }
+                    set_hotkey(id, mods, vk, cx);
+                    this.stop(cx);
+                })))
+            .child(gpui_component::Sizable::small(Button::new(("hotkey-reset", id as usize))).label("Reset").on_click(cx.listener(move |this, _, _, cx| {
+                let vk = if id == crate::tray::HOTKEY_SCREENSHOT { 0x7B } else { 0x70 };
+                set_hotkey(id, crate::tray::MOD_SHIFT, vk, cx);
+                this.stop(cx);
+            })))
+    }
+}

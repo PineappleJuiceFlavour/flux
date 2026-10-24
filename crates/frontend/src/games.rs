@@ -681,6 +681,11 @@ fn now_unix() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
+/// The Flux game whose process (or emulator) has this id, if Flux started it.
+pub fn game_for_pid(pid: u32) -> Option<String> {
+    SESSIONS.lock().unwrap().iter().find(|s| s.child.id() == pid).map(|s| s.id.clone())
+}
+
 pub fn is_running(id: &str) -> bool {
     SESSIONS.lock().unwrap().iter().any(|s| s.id == id)
 }

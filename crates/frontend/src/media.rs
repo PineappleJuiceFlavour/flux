@@ -488,5 +488,16 @@ mod tests {
         assert!(s.time > 1.0, "time {}", s.time);
         let (w, h, px) = s.frame.as_ref().unwrap();
         assert_eq!(px.len(), (w * h * 4) as usize);
+        let seq = s.seq;
+        drop(s);
+        // Skimming while paused: the frame at the new spot still arrives.
+        player.pause();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        player.seek(0.5);
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        let s = player.state.lock().unwrap();
+        assert!(s.paused, "should stay paused");
+        assert!((s.time - 0.5).abs() < 0.3, "time {}", s.time);
+        assert!(s.seq > seq, "no new frame after seeking while paused");
     }
 }

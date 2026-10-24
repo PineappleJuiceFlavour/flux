@@ -392,6 +392,10 @@ pub struct OverlayView {
     viewer: Option<Viewer>,
     /// Selected (row, column) for keys and controllers.
     sel: (usize, usize),
+    /// Where the clip's progress bar is (for clicking and dragging on it).
+    bar: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
+    /// Dragging on the bar: (was it playing, when we last seeked).
+    scrub: Option<(bool, std::time::Instant)>,
     poller: crate::controller_nav::Poller,
     _tick: Task<()>,
 }
@@ -435,7 +439,7 @@ impl OverlayView {
         let flux_game = flux_game_of(&game, cx);
         let mut view = Self {
             game, paused: false, note: None, record_help: false, flux_game, media: Vec::new(), thumbs: HashMap::new(),
-            viewer: None, sel: (2, 0), poller: crate::controller_nav::Poller::default(), _tick,
+            viewer: None, sel: (2, 0), bar: Default::default(), scrub: None, poller: crate::controller_nav::Poller::default(), _tick,
         };
         view.load_media(cx);
         view
@@ -685,6 +689,48 @@ impl OverlayView {
         cx.notify();
     }
 
+    /// Seek to where the mouse is on the progress bar.
+    fn scrub_to(&mut self, x: Pixels) {
+        let Some(bar) = self.bar.get() else { return };
+        let Some(v) = &self.viewer else { return };
+        let Some(player) = &v.player else { return };
+        let frac = ((x - bar.origin.x) / bar.size.width).clamp(0.0, 1.0) as f64;
+        player.seek(frac * v.duration);
+    }
+
+    /// Press on the bar: pause while skimming, jump to that spot.
+    fn scrub_start(&mut self, x: Pixels, cx: &mut Context<Self>) {
+        let Some(player) = self.viewer.as_ref().and_then(|v| v.player.as_ref()) else { return };
+        let playing = {
+            let st = player.state.lock().unwrap();
+            !(st.paused || st.ended)
+        };
+        player.pause();
+        self.scrub = Some((playing, std::time::Instant::now()));
+        self.scrub_to(x);
+        cx.notify();
+    }
+
+    /// Dragging: follow the mouse (a seek every 40 ms is plenty to see where you are).
+    fn scrub_move(&mut self, x: Pixels, cx: &mut Context<Self>) {
+        let Some((playing, last)) = self.scrub else { return };
+        if last.elapsed() >= std::time::Duration::from_millis(40) {
+            self.scrub = Some((playing, std::time::Instant::now()));
+            self.scrub_to(x);
+            cx.notify();
+        }
+    }
+
+    /// Let go: land exactly there, and carry on playing if it was.
+    fn scrub_end(&mut self, x: Pixels, cx: &mut Context<Self>) {
+        let Some((playing, _)) = self.scrub.take() else { return };
+        self.scrub_to(x);
+        if playing && let Some(player) = self.viewer.as_ref().and_then(|v| v.player.as_ref()) {
+            player.play();
+        }
+        cx.notify();
+    }
+
     /// A new frame from the clip player: put it on screen (and free the old one).
     fn pump_player(&mut self, window: &mut Window) -> bool {
         let Some(v) = &mut self.viewer else { return false };
@@ -849,11 +895,21 @@ impl Render for OverlayView {
                 let (d, s, e) = (v.duration.max(0.1), v.start, v.end);
                 let playing = !(paused || ended);
                 viewer = viewer
-                    // Where you are in the clip, with the part you're keeping highlighted.
-                    .child(div().relative().h(px(8.)).w_full().rounded_full().bg(white().opacity(0.1))
-                        .child(div().absolute().top_0().bottom_0().left(relative((s / d) as f32)).w(relative(((e - s) / d) as f32))
-                            .rounded_full().bg(rgba(0x5682ff99)))
-                        .child(div().absolute().top(px(-3.)).h(px(14.)).w(px(3.)).rounded_full().bg(white()).left(relative((time / d).clamp(0.0, 1.0) as f32))))
+                    // Where you are in the clip, with the part you're keeping highlighted. Click or drag on it to skim.
+                    .child({
+                        let bar_cell = self.bar.clone();
+                        let scrubbing = self.scrub.is_some();
+                        div().id("ov-scrub").relative().h(px(22.)).w_full().cursor_pointer().flex().items_center()
+                            .child(canvas(move |bounds, _, _| bar_cell.set(Some(bounds)), |_, _, _, _| {}).absolute().size_full())
+                            .child(div().relative().h(px(if scrubbing { 10. } else { 8. })).w_full().rounded_full().bg(white().opacity(0.12))
+                                .child(div().absolute().top_0().bottom_0().left(relative((s / d) as f32)).w(relative(((e - s) / d) as f32))
+                                    .rounded_full().bg(rgba(0x5682ff99)))
+                                .child(div().absolute().top_0().bottom_0().left_0().w(relative((time / d).clamp(0.0, 1.0) as f32))
+                                    .rounded_full().bg(white().opacity(0.35))))
+                            .child(div().absolute().top(px(2.)).size(px(18.)).rounded_full().bg(white()).border_2().border_color(rgb(0x5682ff))
+                                .ml(px(-9.)).left(relative((time / d).clamp(0.0, 1.0) as f32)))
+                            .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| this.scrub_start(e.position.x, cx)))
+                    })
                     .child(h_flex().gap_2().items_center()
                         .child(button(Act::PlayPause, if playing { PandoraIcon::Pause } else { PandoraIcon::Play }, if playing { "Pause" } else { "Play" }))
                         .child(button(Act::Back5, PandoraIcon::ChevronLeft, "5 s"))
@@ -939,6 +995,8 @@ impl Render for OverlayView {
         bottom = bottom.child(dock);
 
         div().id("flux-overlay").size_full().bg(hsla(0.62, 0.4, 0.03, 0.55)).text_color(white())
+            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| this.scrub_move(e.position.x, cx)))
+            .on_mouse_up(MouseButton::Left, cx.listener(|this, e: &MouseUpEvent, _, cx| this.scrub_end(e.position.x, cx)))
             .child(v_flex().size_full().p(px(if narrow { 20. } else { 32. })).gap_4()
                 .child(top)
                 .child(h_flex().flex_1().min_h_0().overflow_hidden().w_full().items_start().gap_4()

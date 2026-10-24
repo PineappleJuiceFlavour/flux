@@ -27,6 +27,14 @@ pub enum Pending {
 }
 
 pub static PENDING: Mutex<Option<Pending>> = Mutex::new(None);
+/// A game the overlay couldn't open over (exclusive fullscreen): explained next time Flux is open.
+pub static FULLSCREEN_NOTICE: Mutex<Option<String>> = Mutex::new(None);
+
+/// The note for the main window about exclusive fullscreen, once.
+pub fn take_fullscreen_notice() -> Option<String> {
+    FULLSCREEN_NOTICE.lock().unwrap().take().map(|game| format!(
+        "The overlay can't open over {game} while it's in exclusive fullscreen (Windows would knock the game out of fullscreen).          Set the game's display mode to Borderless (or Windowed fullscreen) and the overlay works on top of it."))
+}
 static OVERLAY: Mutex<Option<AnyWindowHandle>> = Mutex::new(None);
 static PERF_RUNNING: AtomicBool = AtomicBool::new(false);
 static GAME_PID: AtomicU32 = AtomicU32::new(0);
@@ -151,6 +159,15 @@ pub fn toggle(foreground: isize, cx: &mut App) {
         log::info!("Overlay: {} wasn't started by Flux", game.exe);
         return;
     }
+    // A game in exclusive fullscreen drops out of fullscreen (often minimizing or quitting) as soon
+    // as any window appears over it, so don't: tell the player instead.
+    if win::exclusive_fullscreen() {
+        log::info!("Overlay: {} is in exclusive fullscreen", game.exe);
+        win::beep();
+        *PENDING.lock().unwrap() = None;
+        *FULLSCREEN_NOTICE.lock().unwrap() = Some(display_title(&game, flux_game_of(&game, cx).as_ref()));
+        return;
+    }
     open_overlay(game, cx);
 }
 
@@ -165,6 +182,13 @@ pub fn key(id: i32, cx: &mut App) {
         _ => crate::controller_nav::Nav::Confirm,
     };
     with_view(cx, |view, window, cx| view.nav(nav, window, cx));
+}
+
+/// Testing only: the overlay over any window, even one Flux didn't start.
+pub fn open_test_window(hwnd: isize, cx: &mut App) {
+    if let Some(game) = win::inspect(hwnd) {
+        open_overlay(game, cx);
+    }
 }
 
 /// Testing only: the overlay over a rectangle of the screen, pretending an emulator runs there.
@@ -248,12 +272,18 @@ pub fn quick_screenshot(foreground: isize, cx: &mut App) {
     if flux_game.is_none() && !is_flux_minecraft(&game, cx) {
         return;
     }
+    // In exclusive fullscreen even the little "saved" note would knock the game out.
+    let quiet = win::exclusive_fullscreen();
     let title = display_title(&game, flux_game.as_ref());
     let text = match win::screenshot(game.hwnd, &title) {
         Ok(_) => "Screenshot saved to Pictures › Flux".to_string(),
         Err(e) => format!("Couldn't take a screenshot: {e}"),
     };
-    toast(&game, text, cx);
+    if quiet {
+        win::beep();
+    } else {
+        toast(&game, text, cx);
+    }
 }
 
 /// A small note in the top-right corner of the game for a few seconds (it doesn't take focus).
@@ -364,8 +394,8 @@ impl OverlayView {
                     (polled.presses, repaint, view.game.hwnd)
                 });
                 let Ok((presses, repaint, game_hwnd)) = alive else { break };
-                let front = win::foreground();
-                let left_game = game_hwnd != 0 && front != 0 && front != game_hwnd && !win::is_own_window(front);
+                // Close when you switch to another app (taskbar, Alt+Tab, Win key), or the game is minimized or gone.
+                let left_game = game_hwnd != 0 && win::left_game(game_hwnd);
                 let handle = *OVERLAY.lock().unwrap();
                 let Some(window) = handle else { break };
                 _ = window.update(cx, |root, window, cx| {
@@ -955,6 +985,28 @@ pub mod win {
         }
     }
 
+    /// You switched away from the game (another app in front), or it's minimized or closed.
+    pub fn left_game(game: isize) -> bool {
+        unsafe {
+            let h = HWND(game as _);
+            if !IsWindow(Some(h)).as_bool() || IsIconic(h).as_bool() {
+                return true;
+            }
+            let front = GetForegroundWindow();
+            front.0 as isize != 0 && front != h && !is_own_window(front.0 as isize)
+        }
+    }
+
+    /// A Direct3D game is in exclusive fullscreen right now.
+    pub fn exclusive_fullscreen() -> bool {
+        use windows::Win32::UI::Shell::{QUNS_RUNNING_D3D_FULL_SCREEN, SHQueryUserNotificationState};
+        unsafe { SHQueryUserNotificationState().is_ok_and(|s| s == QUNS_RUNNING_D3D_FULL_SCREEN) }
+    }
+
+    pub fn beep() {
+        unsafe { _ = windows::Win32::System::Diagnostics::Debug::MessageBeep(MB_OK) };
+    }
+
     pub fn foreground() -> isize {
         unsafe { GetForegroundWindow().0 as isize }
     }
@@ -1166,6 +1218,9 @@ pub mod win {
     pub fn inspect(_hwnd: isize) -> Option<GameWindow> { None }
     pub fn focus(_hwnd: isize) {}
     pub fn foreground() -> isize { 0 }
+    pub fn left_game(_game: isize) -> bool { false }
+    pub fn exclusive_fullscreen() -> bool { false }
+    pub fn beep() {}
     pub fn is_own_window(_hwnd: isize) -> bool { false }
     pub fn make_no_activate(_rect: (i32, i32, i32, i32)) {}
     pub fn close(_hwnd: isize) {}

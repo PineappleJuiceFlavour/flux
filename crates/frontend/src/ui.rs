@@ -472,6 +472,9 @@ impl LauncherUI {
                         open_chat_once = false;
                         ui.update(cx, |ui, cx| ui.open_chat(crate::chat::panel::ChatView::Chats, window, cx));
                     }
+                    if window.is_window_active() && let Some(notice) = crate::overlay::take_fullscreen_notice() {
+                        window.push_notification(gpui_component::notification::Notification::warning(notice).autohide(false), cx);
+                    }
                     // The tray or the overlay asked for something in this window.
                     let pending = crate::overlay::PENDING.lock().unwrap().take();
                     match pending {

@@ -73,6 +73,8 @@ fn run_tray_test(test: &str, cx: &mut App) {
         if let (Some(x), Some(y)) = (it.next(), it.next()) {
             tray_popup::open(x, y, cx);
         }
+    } else if let Some(hwnd) = test.strip_prefix("overlay-any:").and_then(|h| h.trim().parse::<isize>().ok()) {
+        overlay::open_test_window(hwnd, cx);
     } else if let Some(rect) = test.strip_prefix("overlay-rect:") {
         let v: Vec<i32> = rect.split(',').filter_map(|v| v.trim().parse().ok()).collect();
         if v.len() == 4 {

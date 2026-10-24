@@ -196,6 +196,18 @@ pub fn open_test(x: i32, y: i32, w: i32, h: i32, cx: &mut App) {
     let game = GameWindow { hwnd: 0, pid: 0, title: "Test game".into(), exe: "rpcs3.exe".into(), exe_path: String::new(),
         rect: (x, y, w, h), scale: crate::tray_popup::scale_at(x, y), started: Some(0) };
     open_overlay(game, cx);
+    // FLUX_OVERLAY_TEST_CLIP=<mp4>: open it in the viewer, muted.
+    if let Ok(clip) = std::env::var("FLUX_OVERLAY_TEST_CLIP") {
+        with_view(cx, |view, _, cx| {
+            let path = PathBuf::from(clip);
+            let duration = media::duration(&path).unwrap_or(0.0);
+            let item = MediaItem { path: path.clone(), video: true, modified: std::time::SystemTime::now() };
+            view.viewer = Some(Viewer { player: Some(media::Player::open(&path, true)), image: None, seen: 0, duration,
+                start: 0.0, end: duration, busy: false, item });
+            view.sel = (1, 0);
+            cx.notify();
+        });
+    }
 }
 
 fn open_overlay(game: GameWindow, cx: &mut App) {
@@ -345,18 +357,22 @@ enum Act {
     ViewCopy,
     ViewFolder,
     ViewOpen,
-    StartBack,
-    StartFwd,
-    EndBack,
-    EndFwd,
+    PlayPause,
+    Back5,
+    Fwd5,
+    SetStart,
+    SetEnd,
     TrimSave,
 }
 
 /// The screenshot or clip open in the viewer.
 struct Viewer {
     item: MediaItem,
-    /// The frame shown for a clip (the start or end you're picking).
-    frame: Option<PathBuf>,
+    /// Clips play right here in the overlay, with sound; screenshots just show.
+    player: Option<media::Player>,
+    /// The clip's current frame, and which one it is.
+    image: Option<std::sync::Arc<RenderImage>>,
+    seen: u64,
     duration: f64,
     start: f64,
     end: f64,
@@ -408,7 +424,8 @@ impl OverlayView {
                         for nav in presses {
                             view.nav(nav, window, cx);
                         }
-                        if repaint {
+                        let new_frame = view.pump_player(window);
+                        if repaint || new_frame {
                             cx.notify();
                         }
                     });
@@ -462,11 +479,12 @@ impl OverlayView {
     /// The selectable things, row by row (top to bottom).
     fn rows(&self) -> Vec<Vec<Act>> {
         if let Some(v) = &self.viewer {
-            let mut rows = vec![vec![Act::ViewClose], vec![Act::ViewCopy, Act::ViewFolder, Act::ViewOpen]];
-            if v.item.video {
-                rows.push(vec![Act::StartBack, Act::StartFwd, Act::EndBack, Act::EndFwd, Act::TrimSave]);
-            }
-            return rows;
+            return if v.item.video {
+                vec![vec![Act::ViewClose], vec![Act::PlayPause, Act::Back5, Act::Fwd5, Act::ViewCopy, Act::ViewFolder],
+                    vec![Act::SetStart, Act::SetEnd, Act::TrimSave]]
+            } else {
+                vec![vec![Act::ViewClose], vec![Act::ViewCopy, Act::ViewFolder, Act::ViewOpen]]
+            };
         }
         let mut dock = vec![Act::Shot, Act::Record, Act::Flux, Act::Chat];
         if self.flux_game.is_some() {
@@ -533,9 +551,9 @@ impl OverlayView {
             Act::Media(i) => {
                 let Some(item) = self.media.get(i).cloned() else { return };
                 let duration = if item.video { media::duration(&item.path).unwrap_or(0.0) } else { 0.0 };
-                self.viewer = Some(Viewer { frame: None, duration, start: 0.0, end: duration, busy: false, item });
+                let player = item.video.then(|| media::Player::open(&item.path, false));
+                self.viewer = Some(Viewer { player, image: None, seen: 0, duration, start: 0.0, end: duration, busy: false, item });
                 self.sel = (1, 0);
-                self.load_frame(0.0, cx);
             },
             Act::Shot => {
                 self.note = Some(match win::screenshot(game_hwnd, &self.title()) {
@@ -588,7 +606,9 @@ impl OverlayView {
                 win::close(game_hwnd);
             },
             Act::ViewClose => {
-                self.viewer = None;
+                if let Some(image) = self.viewer.take().and_then(|v| v.image) {
+                    _ = window.drop_image(image);
+                }
                 self.sel = (1, 0);
             },
             Act::ViewCopy => {
@@ -622,16 +642,21 @@ impl OverlayView {
                     self.close(window, cx);
                 }
             },
-            Act::StartBack | Act::StartFwd | Act::EndBack | Act::EndFwd => {
+            Act::PlayPause | Act::Back5 | Act::Fwd5 | Act::SetStart | Act::SetEnd => {
                 let Some(v) = &mut self.viewer else { return };
-                let step = 1.0;
-                let at = match act {
-                    Act::StartBack => { v.start = (v.start - step).max(0.0); v.start },
-                    Act::StartFwd => { v.start = (v.start + step).min(v.end - 1.0).max(0.0); v.start },
-                    Act::EndBack => { v.end = (v.end - step).max(v.start + 1.0).min(v.duration); v.end },
-                    _ => { v.end = (v.end + step).min(v.duration); v.end },
+                let Some(player) = &v.player else { return };
+                let (time, paused, ended) = {
+                    let st = player.state.lock().unwrap();
+                    (st.time, st.paused, st.ended)
                 };
-                self.load_frame(at, cx);
+                match act {
+                    Act::PlayPause if paused || ended => player.play(),
+                    Act::PlayPause => player.pause(),
+                    Act::Back5 => player.seek(time - 5.0),
+                    Act::Fwd5 => player.seek((time + 5.0).min(v.duration)),
+                    Act::SetStart => v.start = time.min(v.end - 0.5).max(0.0),
+                    _ => v.end = time.max(v.start + 0.5).min(v.duration),
+                }
             },
             Act::TrimSave => {
                 let Some(v) = &mut self.viewer else { return };
@@ -660,23 +685,24 @@ impl OverlayView {
         cx.notify();
     }
 
-    /// Show the clip's frame at `secs` in the viewer.
-    fn load_frame(&mut self, secs: f64, cx: &mut Context<Self>) {
-        let Some(v) = &self.viewer else { return };
-        if !v.item.video {
-            return;
+    /// A new frame from the clip player: put it on screen (and free the old one).
+    fn pump_player(&mut self, window: &mut Window) -> bool {
+        let Some(v) = &mut self.viewer else { return false };
+        let Some(state) = v.player.as_ref().map(|p| p.state.clone()) else { return false };
+        let frame = {
+            let st = state.lock().unwrap();
+            if st.seq == v.seen { None } else { v.seen = st.seq; st.frame.clone() }
+        };
+        let Some((w, h, pixels)) = frame else { return false };
+        // GPUI keeps images in BGRA, which is what the player hands over.
+        let Some(buffer) = image::RgbaImage::from_raw(w, h, pixels) else { return false };
+        let image = std::sync::Arc::new(RenderImage::new(vec![image::Frame::new(buffer)]));
+        if let Some(old) = v.image.replace(image) {
+            _ = window.drop_image(old);
         }
-        let path = v.item.path.clone();
-        cx.spawn(async move |this, cx| {
-            let frame = cx.background_executor().spawn(async move { media::frame(&path, secs) }).await;
-            _ = this.update(cx, |view, cx| {
-                if let (Some(v), Ok(f)) = (&mut view.viewer, frame) {
-                    v.frame = Some(f);
-                }
-                cx.notify();
-            });
-        }).detach();
+        true
     }
+
 }
 
 fn panel() -> Div {
@@ -796,11 +822,14 @@ impl Render for OverlayView {
         }
 
         // Middle: the viewer, or your newest screenshots and clips.
+        // The picture gets whatever height is left between the top, its controls and the bottom bar.
+        let reserved = if self.viewer.as_ref().is_some_and(|v| v.item.video) { 520. } else { 420. };
+        let media_h = px((f32::from(window.viewport_size().height) - reserved).max(120.));
         let middle: AnyElement = if let Some(v) = &self.viewer {
             let name = v.item.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            let picture: AnyElement = match (&v.item.video, &v.frame) {
-                (false, _) => img(v.item.path.clone()).w_full().max_h(px(420.)).object_fit(ObjectFit::Contain).into_any_element(),
-                (true, Some(f)) => img(f.clone()).w_full().max_h(px(420.)).object_fit(ObjectFit::Contain).into_any_element(),
+            let picture: AnyElement = match (&v.item.video, &v.image) {
+                (false, _) => img(v.item.path.clone()).w_full().h(media_h).object_fit(ObjectFit::Contain).into_any_element(),
+                (true, Some(frame)) => img(ImageSource::Render(frame.clone())).w_full().h(media_h).object_fit(ObjectFit::Contain).into_any_element(),
                 (true, None) => div().h(px(240.)).flex().items_center().justify_center().text_color(muted).child("Loading…").into_any_element(),
             };
             let button = |act: Act, icon: PandoraIcon, label: &str| ring(h_flex().id(SharedString::from(format!("view-{act:?}"))).gap_2().px_3().py_2().rounded_lg()
@@ -810,28 +839,40 @@ impl Render for OverlayView {
                 .child(h_flex().justify_between().items_center()
                     .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).overflow_hidden().whitespace_nowrap().text_ellipsis().child(name))
                     .child(button(Act::ViewClose, PandoraIcon::Close, "Close")))
-                .child(picture)
-                .child(h_flex().gap_2().child(button(Act::ViewCopy, PandoraIcon::Copy, "Copy"))
-                    .child(button(Act::ViewFolder, PandoraIcon::FolderOpen, "Show in folder"))
-                    .child(button(Act::ViewOpen, if v.item.video { PandoraIcon::Play } else { PandoraIcon::Image },
-                        if v.item.video { "Play" } else { "Open" })));
-            if v.item.video {
+                .child(picture);
+            if let Some(player) = &v.player {
+                let (time, paused, ended, error) = {
+                    let st = player.state.lock().unwrap();
+                    (st.time, st.paused, st.ended, st.error.clone())
+                };
                 let (d, s, e) = (v.duration.max(0.1), v.start, v.end);
+                let playing = !(paused || ended);
                 viewer = viewer
-                    .child(div().mt_1().child(heading("Trim")))
+                    // Where you are in the clip, with the part you're keeping highlighted.
                     .child(div().relative().h(px(8.)).w_full().rounded_full().bg(white().opacity(0.1))
                         .child(div().absolute().top_0().bottom_0().left(relative((s / d) as f32)).w(relative(((e - s) / d) as f32))
-                            .rounded_full().bg(rgb(0x5682ff))))
-                    .child(h_flex().gap_2().items_center().text_sm()
-                        .child(div().text_color(muted).child(format!("Start {}", clock(s))))
-                        .child(button(Act::StartBack, PandoraIcon::ChevronLeft, "1 s"))
-                        .child(button(Act::StartFwd, PandoraIcon::ChevronRight, "1 s"))
-                        .child(div().w(px(16.)))
-                        .child(div().text_color(muted).child(format!("End {}", clock(e))))
-                        .child(button(Act::EndBack, PandoraIcon::ChevronLeft, "1 s"))
-                        .child(button(Act::EndFwd, PandoraIcon::ChevronRight, "1 s"))
+                            .rounded_full().bg(rgba(0x5682ff99)))
+                        .child(div().absolute().top(px(-3.)).h(px(14.)).w(px(3.)).rounded_full().bg(white()).left(relative((time / d).clamp(0.0, 1.0) as f32))))
+                    .child(h_flex().flex_wrap().gap_2().items_center()
+                        .child(button(Act::PlayPause, if playing { PandoraIcon::Pause } else { PandoraIcon::Play }, if playing { "Pause" } else { "Play" }))
+                        .child(button(Act::Back5, PandoraIcon::ChevronLeft, "5 s"))
+                        .child(button(Act::Fwd5, PandoraIcon::ChevronRight, "5 s"))
+                        .child(div().text_sm().text_color(muted).child(format!("{} / {}", clock(time), clock(v.duration))))
                         .child(div().flex_1())
-                        .child(button(Act::TrimSave, PandoraIcon::Check, if v.busy { "Saving…" } else { "Save trimmed clip" })));
+                        .child(button(Act::ViewCopy, PandoraIcon::Copy, "Copy"))
+                        .child(button(Act::ViewFolder, PandoraIcon::FolderOpen, "Show in folder")))
+                    .child(h_flex().flex_wrap().gap_2().items_center().text_sm()
+                        .child(heading("Trim"))
+                        .child(button(Act::SetStart, PandoraIcon::ChevronLeft, "Set start here"))
+                        .child(button(Act::SetEnd, PandoraIcon::ChevronRight, "Set end here"))
+                        .child(div().text_color(muted).child(format!("Keeping {} to {}", clock(s), clock(e))))
+                        .child(div().flex_1())
+                        .child(button(Act::TrimSave, PandoraIcon::Check, if v.busy { "Saving…" } else { "Save trimmed clip" })))
+                    .when_some(error, |this, e| this.child(div().text_sm().text_color(rgb(0xff7a7a)).child(e)));
+            } else {
+                viewer = viewer.child(h_flex().gap_2().child(button(Act::ViewCopy, PandoraIcon::Copy, "Copy"))
+                    .child(button(Act::ViewFolder, PandoraIcon::FolderOpen, "Show in folder"))
+                    .child(button(Act::ViewOpen, PandoraIcon::Image, "Open")));
             }
             viewer.into_any_element()
         } else {
@@ -899,7 +940,7 @@ impl Render for OverlayView {
         div().id("flux-overlay").size_full().bg(hsla(0.62, 0.4, 0.03, 0.55)).text_color(white())
             .child(v_flex().size_full().p(px(if narrow { 20. } else { 32. })).gap_4()
                 .child(top)
-                .child(h_flex().flex_1().min_h_0().w_full().items_start().gap_4()
+                .child(h_flex().flex_1().min_h_0().overflow_hidden().w_full().items_start().gap_4()
                     .child(overview)
                     .child(middle)
                     .child(friends))

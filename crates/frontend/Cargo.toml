@@ -53,3 +53,4 @@ casefold.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
+windows-core = "0.62.2"

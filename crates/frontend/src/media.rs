@@ -101,6 +101,81 @@ pub fn open(path: &Path) {
     _ = std::process::Command::new("explorer").arg(path).spawn();
 }
 
+/// What the clip player shows right now.
+#[derive(Default)]
+pub struct PlayerState {
+    /// The newest frame: width, height, BGRA pixels; `seq` goes up with each new one.
+    pub frame: Option<(u32, u32, Vec<u8>)>,
+    pub seq: u64,
+    pub time: f64,
+    pub duration: f64,
+    pub paused: bool,
+    pub ended: bool,
+    pub error: Option<String>,
+}
+
+enum PlayerCmd {
+    Play,
+    Pause,
+    Seek(f64),
+}
+
+/// Plays a clip with its sound (Windows' Media Engine) on its own thread; frames land in `state`.
+/// Dropping it stops playback.
+pub struct Player {
+    cmds: std::sync::mpsc::Sender<PlayerCmd>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub state: std::sync::Arc<std::sync::Mutex<PlayerState>>,
+}
+
+impl Player {
+    pub fn open(path: &Path, muted: bool) -> Self {
+        let (cmds, rx) = std::sync::mpsc::channel();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let state = std::sync::Arc::new(std::sync::Mutex::new(PlayerState::default()));
+        let (path, s, st) = (path.to_path_buf(), state.clone(), stop.clone());
+        std::thread::Builder::new().name("flux-clip-player".into()).spawn(move || {
+            if let Err(e) = imp::run_player(&path, muted, rx, &s, &st) {
+                s.lock().unwrap().error = Some(e);
+            }
+        }).ok();
+        Self { cmds, stop, state }
+    }
+
+    pub fn play(&self) {
+        _ = self.cmds.send(PlayerCmd::Play);
+    }
+
+    pub fn pause(&self) {
+        _ = self.cmds.send(PlayerCmd::Pause);
+    }
+
+    pub fn seek(&self, secs: f64) {
+        _ = self.cmds.send(PlayerCmd::Seek(secs.max(0.0)));
+    }
+}
+
+impl Drop for Player {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[cfg(windows)]
+mod player_imp {
+    use windows::Win32::Media::MediaFoundation::{IMFMediaEngineNotify, IMFMediaEngineNotify_Impl};
+
+    /// The Media Engine insists on a callback; Flux polls its state instead.
+    #[windows::core::implement(IMFMediaEngineNotify)]
+    pub struct Notify;
+
+    impl IMFMediaEngineNotify_Impl for Notify_Impl {
+        fn EventNotify(&self, _event: u32, _param1: usize, _param2: u32) -> windows::core::Result<()> {
+            Ok(())
+        }
+    }
+}
+
 #[cfg(windows)]
 mod imp {
     use std::path::Path;
@@ -248,6 +323,97 @@ mod imp {
         }
     }
 
+    pub fn run_player(path: &Path, muted: bool, cmds: std::sync::mpsc::Receiver<super::PlayerCmd>,
+        state: &std::sync::Mutex<super::PlayerState>, stop: &std::sync::atomic::AtomicBool) -> Result<(), String>
+    {
+        use windows::Win32::{
+            Foundation::RECT,
+            Graphics::Imaging::{CLSID_WICImagingFactory, GUID_WICPixelFormat32bppBGRA, IWICBitmap, IWICImagingFactory, WICBitmapCacheOnLoad, WICBitmapLockRead, WICRect},
+            System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance},
+        };
+        start()?;
+        unsafe {
+            let factory: IMFMediaEngineClassFactory = CoCreateInstance(&CLSID_MFMediaEngineClassFactory, None, CLSCTX_INPROC_SERVER)
+                .map_err(|e| e.to_string())?;
+            let notify: IMFMediaEngineNotify = super::player_imp::Notify.into();
+            let mut attrs = None;
+            MFCreateAttributes(&mut attrs, 2).map_err(|e| e.to_string())?;
+            let attrs = attrs.ok_or("no attributes")?;
+            attrs.SetUnknown(&MF_MEDIA_ENGINE_CALLBACK, &notify).map_err(|e| e.to_string())?;
+            // 87 = DXGI_FORMAT_B8G8R8A8_UNORM
+            attrs.SetUINT32(&MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT, 87).map_err(|e| e.to_string())?;
+            let engine = factory.CreateInstance(0, &attrs).map_err(|e| e.to_string())?;
+            engine.SetMuted(muted).ok();
+            engine.SetSource(&windows::core::BSTR::from(path.to_string_lossy().as_ref())).map_err(|e| e.to_string())?;
+            engine.Play().map_err(|e| e.to_string())?;
+            let wic: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).map_err(|e| e.to_string())?;
+            let mut bitmap: Option<(u32, u32, IWICBitmap)> = None;
+            let mut last_pts = -1i64;
+            while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                while let Ok(cmd) = cmds.try_recv() {
+                    match cmd {
+                        super::PlayerCmd::Play => {
+                            if engine.IsEnded().as_bool() {
+                                _ = engine.SetCurrentTime(0.0);
+                            }
+                            _ = engine.Play();
+                        },
+                        super::PlayerCmd::Pause => _ = engine.Pause(),
+                        super::PlayerCmd::Seek(t) => _ = engine.SetCurrentTime(t),
+                    }
+                }
+                if let Ok(pts) = engine.OnVideoStreamTick() && pts != last_pts {
+                    let (mut w, mut h) = (0u32, 0u32);
+                    if engine.GetNativeVideoSize(Some(&mut w), Some(&mut h)).is_ok() && w > 0 && h > 0 {
+                        // Big clips are shown smaller: plenty for the overlay, and cheap to copy.
+                        let (dw, dh) = if w > 1280 { (1280, (1280 * h / w).max(1)) } else { (w, h) };
+                        if bitmap.as_ref().is_none_or(|b| b.0 != dw || b.1 != dh) {
+                            bitmap = wic.CreateBitmap(dw, dh, &GUID_WICPixelFormat32bppBGRA, WICBitmapCacheOnLoad).ok().map(|b| (dw, dh, b));
+                        }
+                        if let Some((bw, bh, b)) = &bitmap {
+                            let dst = RECT { left: 0, top: 0, right: *bw as i32, bottom: *bh as i32 };
+                            if engine.TransferVideoFrame(b, None, &dst, None).is_ok() {
+                                last_pts = pts;
+                                let rect = WICRect { X: 0, Y: 0, Width: *bw as i32, Height: *bh as i32 };
+                                if let Ok(lock) = b.Lock(&rect, WICBitmapLockRead.0 as u32) {
+                                    let (mut size, mut ptr) = (0u32, std::ptr::null_mut());
+                                    let stride = lock.GetStride().unwrap_or(*bw * 4) as usize;
+                                    if lock.GetDataPointer(&mut size, &mut ptr).is_ok() && !ptr.is_null() {
+                                        let data = std::slice::from_raw_parts(ptr, size as usize);
+                                        let row = (*bw * 4) as usize;
+                                        let mut pixels = Vec::with_capacity(row * *bh as usize);
+                                        for y in 0..*bh as usize {
+                                            pixels.extend_from_slice(&data[y * stride..y * stride + row]);
+                                        }
+                                        let mut s = state.lock().unwrap();
+                                        s.frame = Some((*bw, *bh, pixels));
+                                        s.seq += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                {
+                    let mut s = state.lock().unwrap();
+                    s.time = engine.GetCurrentTime();
+                    let d = engine.GetDuration();
+                    if d.is_finite() {
+                        s.duration = d;
+                    }
+                    s.paused = engine.IsPaused().as_bool();
+                    s.ended = engine.IsEnded().as_bool();
+                    if let Ok(err) = engine.GetError() {
+                        s.error = Some(format!("Couldn't play this clip (error {})", err.GetErrorCode()));
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(8));
+            }
+            _ = engine.Shutdown();
+            Ok(())
+        }
+    }
+
     pub fn copy_file(path: &Path) -> Result<(), String> {
         let wide: Vec<u16> = path.as_os_str().encode_wide_list();
         let header = std::mem::size_of::<DROPFILES>();
@@ -291,6 +457,8 @@ mod imp {
     pub fn decode_frame(_video: &Path, _secs: f64) -> Result<(u32, u32, Vec<u8>), String> { Err("Windows only".into()) }
     pub fn trim(_video: &Path, _out: &Path, _start: f64, _end: f64) -> Result<(), String> { Err("Windows only".into()) }
     pub fn copy_file(_path: &Path) -> Result<(), String> { Err("Windows only".into()) }
+    pub fn run_player(_path: &Path, _muted: bool, _cmds: std::sync::mpsc::Receiver<super::PlayerCmd>,
+        _state: &std::sync::Mutex<super::PlayerState>, _stop: &std::sync::atomic::AtomicBool) -> Result<(), String> { Err("Windows only".into()) }
 }
 
 #[cfg(all(test, windows))]
@@ -311,5 +479,14 @@ mod tests {
         let td = duration(&out).expect("trimmed duration");
         assert!(td > 0.5 && td < d, "{td} vs {d}");
         std::fs::remove_file(out).ok();
+        // Playback (muted): frames arrive and time moves on.
+        let player = Player::open(&path, true);
+        std::thread::sleep(std::time::Duration::from_millis(2500));
+        let s = player.state.lock().unwrap();
+        assert!(s.error.is_none(), "{:?}", s.error);
+        assert!(s.seq > 10, "only {} frames", s.seq);
+        assert!(s.time > 1.0, "time {}", s.time);
+        let (w, h, px) = s.frame.as_ref().unwrap();
+        assert_eq!(px.len(), (w * h * 4) as usize);
     }
 }

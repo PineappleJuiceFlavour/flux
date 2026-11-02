@@ -1,0 +1,23 @@
+{
+  "name": "SquadUp!",
+  "short_name": "SquadUp!",
+  "description": "Pick what to play, organize your backlog, follow patch notes and schedule game nights with your squad.",
+  "id": "/secretmobileapp/",
+  "start_url": "/secretmobileapp/",
+  "scope": "/secretmobileapp/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F6F5FB",
+  "theme_color": "#5B3FD9",
+  "categories": ["games", "entertainment", "social"],
+  "icons": [
+    { "src": "/secretmobileapp/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/secretmobileapp/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/secretmobileapp/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Shuffle", "url": "/secretmobileapp/play?mode=shuffle", "icons": [{ "src": "/secretmobileapp/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Pick a Game", "url": "/secretmobileapp/play?mode=pick", "icons": [{ "src": "/secretmobileapp/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Schedule a Session", "url": "/secretmobileapp/session/new", "icons": [{ "src": "/secretmobileapp/icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}
